@@ -9,8 +9,6 @@ import torch_geometric.utils as pygUtils
 import yaml
 from torch_geometric.data import InMemoryDataset, download_url, extract_zip
 
-from line_profiler import profile
-
 from my_graphs_dataset import GraphDataset
 
 
@@ -87,7 +85,6 @@ class ConnectivityDataset(InMemoryDataset):
 
         self.save(data_list, self.processed_paths[0])
 
-    @profile
     def make_data(self, G):
         """Create a PyG data object from a graph object."""
 
