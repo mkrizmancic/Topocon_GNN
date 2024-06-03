@@ -85,20 +85,20 @@ class ConnectivityDataset(InMemoryDataset):
 
         self.save(data_list, self.processed_paths[0])
 
+    # Define features in use.
+    feature_functions = {
+        "degree": lambda x: x.degree,
+        "degree_centrality": nx.degree_centrality,
+        "betweenness_centrality": nx.betweenness_centrality,
+    }
+
     def make_data(self, G):
         """Create a PyG data object from a graph object."""
-
-        # Define features in use.
-        feature_functions = {
-            "degree": G.degree,
-            "degree_centrality": nx.degree_centrality(G),
-            "betweenness_centrality": nx.betweenness_centrality(G),
-        }
-
         # Compute and add features to the nodes in the graph.
-        for node in G.nodes():
-            for feature in feature_functions:
-                G.nodes[node][feature] = feature_functions[feature][node]
+        for feature in self.feature_functions:
+            feature_val = self.feature_functions[feature](G)
+            for node in G.nodes():
+                G.nodes[node][feature] = feature_val[node]
 
         # for node in G.nodes():
         #     G.nodes[node]["degree"] = G.degree(node)
@@ -111,10 +111,15 @@ class ConnectivityDataset(InMemoryDataset):
         # for node in G.nodes():
         #     G.nodes[node]["betweenness_centrality"] = between_cent[node]
 
-        torch_G = pygUtils.from_networkx(G, group_node_attrs=list(feature_functions.keys()))
-        torch_G.y = torch.tensor(ConnectivityDataset.algebraic_connectivity(G), dtype=torch.float32)
+        torch_G = pygUtils.from_networkx(G, group_node_attrs=self.features)
+        torch_G.y = torch.tensor(self.algebraic_connectivity(G), dtype=torch.float32)
 
         return torch_G
+
+    @property
+    def features(self):
+        return list(self.feature_functions.keys())
+
 
     @staticmethod
     def algebraic_connectivity(G):
