@@ -1,9 +1,7 @@
 import argparse
-from ast import arg
 import concurrent.futures
 import os
 import pathlib
-from re import A
 
 import codetiming
 import numpy as np
@@ -12,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import torch
 import wandb
-import yaml
 from algebraic_connectivity_dataset import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
 from torch.nn import Linear, ReLU
@@ -267,14 +264,12 @@ def evaluate(model, plot_graphs=False, is_sweep=False):
     return results
 
 
-def main(config, skip_evaluation=False):
-    # GLOBALS: device, dataset, train_data_obj, test_data_obj
+def main(config=None, skip_evaluation=False):
+    # GLOBALS: device, dataset, dataset_config, train_data_obj, test_data_obj
 
-    is_sweep = isinstance(config, str)
-
-    if is_sweep:
-        with open(pathlib.Path(__file__).parent / config) as file:
-            config = yaml.load(file, Loader=yaml.FullLoader)
+    if config is None:
+        is_sweep = True
+        config = {"dataset": dataset_config}
 
     # Set up the run
     run = wandb.init(project="gnn_fiedler_approx", tags=["lambda2", "fiedler", "baseline"], config=config)
@@ -322,7 +317,6 @@ if __name__ == "__main__":
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
     args.add_argument("--config", type=str, default="", help="Path to the configuration file.")
     args = args.parse_args()
-
 
     # ***************************************
     # *************** LOADING ***************
@@ -402,9 +396,9 @@ if __name__ == "__main__":
             print(data)
             print()
 
-# ***************************************
-# ***************** RUN *****************
-# ***************************************
+    # ***************************************
+    # ***************** RUN *****************
+    # ***************************************
     if args.standalone:
         global_config = {
             "seed": seed,
@@ -419,4 +413,4 @@ if __name__ == "__main__":
         run = main(global_config)
         run.finish()
     else:
-        run = main(args.config)
+        run = main()
