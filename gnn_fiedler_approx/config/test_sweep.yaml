@@ -6,7 +6,7 @@ metric:
   name: test_loss
 parameters:
   architecture:
-    values: [GCN, GAT]
+    values: [GCN,]
   hidden_channels:
     values: [16]
   num_layers:
@@ -17,6 +17,11 @@ parameters:
     values: [0.01]
   epochs:
     value: 1000
+  features:
+    values:
+      - [degree]
+      - [degree, degree_centrality]
+      - [degree, degree_centrality, betweenness_centrality]
 early_terminate:
   type: hyperband
   eta: 3

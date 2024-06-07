@@ -69,6 +69,76 @@ custom_gnns = {x.__name__: x for x in [MyGCN]}
 
 
 # ***************************************
+# *************** DATASET ***************
+# ***************************************
+def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_size=0, seed=42, is_sweep=False):
+    dataset_config = {
+        "name": "ConnectivityDataset",
+        "selected_graphs": str(selected_graph_sizes),
+        "split": split,
+        "batch_size": batch_size,
+        "seed": seed,
+    }
+
+    # Load the dataset.
+    root = pathlib.Path(os.getcwd()) / "Dataset"
+    graphs_loader = GraphDataset(selection=selected_graph_sizes)
+    dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
+
+    # General information
+    if not is_sweep:
+        print()
+        print(f"Dataset: {dataset}:")
+        print("====================")
+        print(f"Number of graphs: {len(dataset)}")
+        print(f"Number of features: {dataset.num_features}")
+
+    # Store information about the dataset.
+    dataset_config["num_graphs"] = len(dataset)
+    features = selected_features if selected_features else dataset.features
+
+    # Shuffle and split the dataset.
+    torch.manual_seed(seed)
+    dataset = dataset.shuffle()
+
+    train_size = round(dataset_config["split"] * len(dataset))
+    train_dataset = dataset[:train_size]
+    test_dataset = dataset[train_size:]
+
+    if not is_sweep:
+        print()
+        print(f"Number of training graphs: {len(train_dataset)}")
+        print(f"Number of test graphs: {len(test_dataset)}")
+
+    # Batch and load data.
+    # TODO: Batch size?
+    batch_size = dataset_config["batch_size"] if dataset_config["batch_size"] > 0 else len(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False) # type: ignore
+
+    train_batch = None
+    test_batch = None
+    # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
+    train_batch = next(iter(train_loader))
+    test_batch = next(iter(test_loader))
+
+    train_data_obj = train_batch if train_batch is not None else train_loader
+    test_data_obj = test_batch if test_batch is not None else test_loader
+
+    if not is_sweep:
+        print()
+        print("Batches:")
+        for step, data in enumerate(train_loader):
+            print(f"Step {step + 1}:")
+            print("=======")
+            print(f"Number of graphs in the current batch: {data.num_graphs}")
+            print(data)
+            print()
+
+    return train_data_obj, test_data_obj, dataset_config, features
+
+
+# ***************************************
 # ************* FUNCTIONS ***************
 # ***************************************
 def generate_model(architecture, in_channels, hidden_channels, num_layers):
@@ -142,7 +212,7 @@ def do_test(model, data, criterion):
     return loss
 
 
-def train(model, optimizer, criterion, num_epochs=100, is_sweep=False):
+def train(model, optimizer, criterion, train_data_obj, test_data_obj, num_epochs=100, is_sweep=False):
     # GLOBALS: device, dataset, train_data_obj, test_data_obj
 
     # Prepare for training.
@@ -189,48 +259,52 @@ def plot_training_curves(num_epochs, train_losses, test_losses, criterion):
     fig.show()
 
 
-def evaluate(model, plot_graphs=False, is_sweep=False):
-    # GLOBALS: dataset_config, train_loader, test_loader
+def eval_batch(model, batch, plot_graphs=False):
+    # Make predictions.
+    data = batch.to(device)
+    out = model(data.x, data.edge_index, data.batch)
+    predictions = out.cpu().numpy().squeeze()
+    ground_truth = data.y.cpu().numpy()
 
-    df = pd.DataFrame()
+    # Extract graphs and create visualizations.
+    nx_graphs = extract_graphs_from_batch(data)
+    graphs, node_nums, edge_nums = zip(*graphs_to_tuple(nx_graphs))
+    # FIXME: This is the only way to parallelize in Jupyter but runs out of memory.
+    # with concurrent.futures.ProcessPoolExecutor(4) as executor:
+    #     graph_visuals = executor.map(create_graph_wandb, nx_graphs, chunksize=10)
+    if plot_graphs:
+        graph_visuals = [create_graph_wandb(g) for g in nx_graphs]
+    else:
+        graph_visuals = ["N/A"] * len(nx_graphs)
+
+    # Store to pandas DataFrame.
+    return pd.DataFrame(
+                {
+                    "GraphVis": graph_visuals,
+                    "Graph": graphs,
+                    "Nodes": node_nums,
+                    "Edges": edge_nums,
+                    "True": ground_truth,
+                    "Predicted": predictions,
+                }
+            )
+
+
+def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
+    # GLOBALS: dataset_config, train_loader, test_loader
 
     # Evaluate the model on the test set.
     model.eval()
+    df = pd.DataFrame()
+
     with torch.no_grad():
-        for data in test_loader:  # Iterate in batches over the training/test dataset.
-            # Make predictions.
-            data = data.to(device)
-            out = model(data.x, data.edge_index, data.batch)
-            predictions = out.cpu().numpy().squeeze()
-            ground_truth = data.y.cpu().numpy()
-
-            # Extract graphs and create visualizations.
-            nx_graphs = extract_graphs_from_batch(data)
-            graphs, node_nums, edge_nums = zip(*graphs_to_tuple(nx_graphs))
-            # FIXME: This is the only way to parallelize in Jupyter but runs out of memory.
-            # with concurrent.futures.ProcessPoolExecutor(4) as executor:
-            #     graph_visuals = executor.map(create_graph_wandb, nx_graphs, chunksize=10)
-            if plot_graphs:
-                graph_visuals = [create_graph_wandb(g) for g in nx_graphs]
-            else:
-                graph_visuals = ["N/A"] * len(nx_graphs)
-
-            # Store to pandas DataFrame.
-            df = pd.concat(
-                [
-                    df,
-                    pd.DataFrame(
-                        {
-                            "GraphVis": graph_visuals,
-                            "Graph": graphs,
-                            "Nodes": node_nums,
-                            "Edges": edge_nums,
-                            "True": ground_truth,
-                            "Predicted": predictions,
-                        }
-                    ),
-                ]
-            )
+        if isinstance(test_data, DataLoader):
+            for batch in test_data:
+                df = pd.concat([df, eval_batch(model, batch, plot_graphs)])
+        elif isinstance(test_data, Data):
+            df = eval_batch(model, test_data, plot_graphs)
+        else:
+            raise ValueError("Data must be a DataLoader or a Batch object.")
 
     # Calculate the statistics.
     df["Error"] = df["True"] - df["Predicted"]
@@ -265,11 +339,21 @@ def evaluate(model, plot_graphs=False, is_sweep=False):
 
 
 def main(config=None, skip_evaluation=False):
-    # GLOBALS: device, dataset, dataset_config, train_data_obj, test_data_obj
+    # GLOBALS: device
 
-    if config is None:
-        is_sweep = True
-        config = {"dataset": dataset_config}
+    is_sweep = config is None
+
+    # Set up dataset.
+    selected_graph_sizes = {
+        3: -1,
+        4: -1,
+        5: -1,
+        6: -1,
+        7: -1,
+        8: -1,
+        # 9:  100000,
+        # 10: 100000
+    }
 
     # Set up the run
     run = wandb.init(project="gnn_fiedler_approx", tags=["lambda2", "fiedler", "baseline"], config=config)
@@ -277,15 +361,29 @@ def main(config=None, skip_evaluation=False):
     if is_sweep:
         print(f"Running sweep with config: {config}...")
 
+    # Load the dataset.
+    train_data_obj, test_data_obj, dataset_config, features = load_dataset(
+        selected_graph_sizes, selected_features=config.get("selected_features", []), is_sweep=is_sweep
+    )
+
+    wandb.config["dataset"] = dataset_config
+    if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
+        wandb.config["selected_features"] = features
+
     # Set up the model, optimizer, and criterion.
     model = generate_model(
-        config["architecture"], dataset.num_features, config["hidden_channels"], config["num_layers"]
+        config["architecture"],
+        len(wandb.config["selected_features"]),
+        config["hidden_channels"],
+        config["num_layers"],
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()
 
     # Run training.
-    train_results = train(model, optimizer, criterion, config["epochs"], is_sweep=is_sweep)
+    train_results = train(
+        model, optimizer, criterion, train_data_obj, test_data_obj, config["epochs"], is_sweep=is_sweep
+    )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
     run.summary["best_test_loss"] = min(train_results["test_losses"])
     run.summary["duration"] = train_results["duration"]
@@ -296,7 +394,7 @@ def main(config=None, skip_evaluation=False):
 
     # Run evaluation.
     if not skip_evaluation:
-        eval_results = evaluate(model, plot_graphs=not is_sweep, is_sweep=is_sweep)
+        eval_results = evaluate(model, test_data_obj, plot_graphs=not is_sweep, is_sweep=is_sweep)
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.log({"abs_err_hist": eval_results["fig_abs_err"], "rel_err_hist": eval_results["fig_rel_err"]})
@@ -315,94 +413,15 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser(description="Train a GNN model to predict the algebraic connectivity of graphs.")
     args.add_argument("--skip-evaluation", action="store_true", help="Skip the evaluation step.")
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
-    args.add_argument("--config", type=str, default="", help="Path to the configuration file.")
     args = args.parse_args()
 
-    # ***************************************
-    # *************** LOADING ***************
-    # ***************************************
     # Get available device.
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loaded torch. Using *{device}* device.")
 
-    # Set up dataset.
-    selected_graph_sizes = {
-        3: -1,
-        4: -1,
-        5: -1,
-        6: -1,
-        7: -1,
-        8: -1,
-        # 9:  100000,
-        # 10: 100000
-    }
-    dataset_config = {
-        "name": "ConnectivityDataset",
-        "selected_graphs": str(selected_graph_sizes),
-        "split": 0.8,
-        "batch_size": 0,
-    }
-
-    # Load the dataset.
-    graphs_loader = GraphDataset(selection=selected_graph_sizes)
-    dataset = ConnectivityDataset(pathlib.Path(os.getcwd()) / "Dataset", graphs_loader)
-
-    # General information
-    if args.standalone:
-        print()
-        print(f"Dataset: {dataset}:")
-        print("====================")
-        print(f"Number of graphs: {len(dataset)}")
-        print(f"Number of features: {dataset.num_features}")
-
-    # Store information about the dataset.
-    dataset_config.update({"num_graphs": len(dataset), "features": dataset.features})
-
-    # Shuffle and split the dataset.
-    torch.manual_seed(seed := 42)
-    dataset = dataset.shuffle()
-
-    train_size = round(dataset_config["split"] * len(dataset))
-    train_dataset = dataset[:train_size]
-    test_dataset = dataset[train_size:]
-
-    if args.standalone:
-        print()
-        print(f"Number of training graphs: {len(train_dataset)}")
-        print(f"Number of test graphs: {len(test_dataset)}")
-
-    # Batch and load data.
-    # TODO: Batch size?
-    batch_size = dataset_config["batch_size"] if dataset_config["batch_size"] > 0 else len(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-    train_batch = None
-    test_batch = None
-    # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
-    train_batch = next(iter(train_loader))
-    test_batch = next(iter(test_loader))
-
-    train_data_obj = train_batch if train_batch is not None else train_loader
-    test_data_obj = test_batch if test_batch is not None else test_loader
-
-    if args.standalone:
-        print()
-        print("Batches:")
-        for step, data in enumerate(train_loader):
-            print(f"Step {step + 1}:")
-            print("=======")
-            print(f"Number of graphs in the current batch: {data.num_graphs}")
-            print(data)
-            print()
-
-    # ***************************************
-    # ***************** RUN *****************
-    # ***************************************
     if args.standalone:
         global_config = {
-            "seed": seed,
-            "dataset": dataset_config,
+            "seed": 42,
             "architecture": "GraphSAGE",
             "hidden_channels": 10,
             "num_layers": 3,

@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch_geometric.utils as pygUtils
 import yaml
-from torch_geometric.data import InMemoryDataset, download_url, extract_zip
+from torch_geometric.data import InMemoryDataset
 
 from my_graphs_dataset import GraphDataset
 
@@ -23,6 +23,9 @@ class ConnectivityDataset(InMemoryDataset):
         super().__init__(root, transform, pre_transform, pre_filter)
 
         self.load(self.processed_paths[0])
+
+        if selected_features := kwargs.get("selected_features"):
+            self.filter_features(selected_features)
 
     @property
     def raw_dir(self):
@@ -120,6 +123,12 @@ class ConnectivityDataset(InMemoryDataset):
     def features(self):
         return list(self.feature_functions.keys())
 
+    def filter_features(self, selected_features):
+        """Filter out features that are not in the selected features."""
+        mask = np.array([name in selected_features for name in self.features])
+        # FIXME: This is not a proper way, but I don't know what else to do.
+        # https://github.com/pyg-team/pytorch_geometric/discussions/7684
+        self._data.x = self._data.x[:, mask]
 
     @staticmethod
     def algebraic_connectivity(G):
@@ -139,11 +148,12 @@ def inspect_dataset(dataset, num_graphs=1):
         # Gather some statistics about the first graph.
         print(f"Number of nodes: {data.num_nodes}")
         print(f"Number of edges: {data.num_edges}")
-        print(f"Algrebraic connectivity: {data.y}")
+        print(f"Algrebraic connectivity: {data.y.item():.5f}")
         print(f"Average node degree: {data.num_edges / data.num_nodes:.2f}")
         print(f"Has isolated nodes: {data.has_isolated_nodes()}")
         print(f"Has self-loops: {data.has_self_loops()}")
         print(f"Is undirected: {data.is_undirected()}")
+        print(f"Features: {data.x}")
 
 
 def main():
@@ -161,7 +171,7 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes)
 
     with codetiming.Timer():
-        dataset = ConnectivityDataset(root, loader)
+        dataset = ConnectivityDataset(root, loader, selected_features=["degree"])
 
     print()
     print(f"Dataset: {dataset}:")
