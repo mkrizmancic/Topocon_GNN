@@ -1,4 +1,5 @@
 import argparse
+from collections import Counter
 import concurrent.futures
 import os
 import pathlib
@@ -15,9 +16,15 @@ from my_graphs_dataset import GraphDataset
 from torch.nn import Linear, ReLU
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential, global_mean_pool
+from torch_geometric.nn import GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential, global_mean_pool, global_max_pool, global_add_pool
 from utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple
 
+
+global_poolings = {
+    "mean": global_mean_pool,
+    "max": global_max_pool,
+    "add": global_add_pool
+}
 
 # ***************************************
 # *************** MODELS ****************
@@ -53,15 +60,17 @@ class MyGCN(torch.nn.Module):
 
 
 class GNNWrapper(torch.nn.Module):
-    def __init__(self, gnn_model, in_channels: int, hidden_channels: int, num_layers: int, **kwargs):
+    def __init__(self, gnn_model, in_channels: int, hidden_channels: int, num_layers: int, pool="mean", **kwargs):
         super().__init__()
         self.gnn = gnn_model(in_channels, hidden_channels, num_layers, **kwargs)
+        self.pool = global_poolings[pool]
         self.classifier = Linear(hidden_channels, 1)
 
     def forward(self, x, edge_index, batch):
         x = self.gnn(x, edge_index)
-        x = global_mean_pool(x, batch)
-        return self.classifier(x)
+        x = self.pool(x, batch)
+        x = self.classifier(x)
+        return x
 
 
 premade_gnns = {x.__name__: x for x in [GCN, GraphSAGE, GIN, GAT]}
@@ -106,9 +115,11 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     test_dataset = dataset[train_size:]
 
     if not is_sweep:
+        train_counter = Counter([data.x.shape[0] for data in train_dataset])
+        test_counter = Counter([data.x.shape[0] for data in test_dataset])
         print()
-        print(f"Number of training graphs: {len(train_dataset)}")
-        print(f"Number of test graphs: {len(test_dataset)}")
+        print(f"Training dataset: {train_counter} ({train_counter.total()})")
+        print(f"Testing dataset : {test_counter} ({test_counter.total()})")
 
     # Batch and load data.
     # TODO: Batch size?
@@ -141,7 +152,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
 # ***************************************
 # ************* FUNCTIONS ***************
 # ***************************************
-def generate_model(architecture, in_channels, hidden_channels, num_layers):
+def generate_model(architecture, in_channels, hidden_channels, num_layers, **kwargs):
     """Generate a Neural Network model based on the architecture and hyperparameters."""
     # GLOBALS: device, premade_gnns, custom_gnns
     if architecture in premade_gnns:
@@ -150,6 +161,7 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers):
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             num_layers=num_layers,
+            **kwargs
         ).to(device)
     else:
         MyGNN = custom_gnns[architecture]
@@ -338,10 +350,11 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
     return results
 
 
-def main(config=None, skip_evaluation=False):
+def main(config=None, skip_evaluation=False, no_wandb=False):
     # GLOBALS: device
 
     is_sweep = config is None
+    wandb_mode = "disabled" if no_wandb else "online"
 
     # Set up dataset.
     selected_graph_sizes = {
@@ -356,7 +369,7 @@ def main(config=None, skip_evaluation=False):
     }
 
     # Set up the run
-    run = wandb.init(project="gnn_fiedler_approx", tags=["lambda2", "fiedler", "baseline"], config=config)
+    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx", tags=["lambda2", "fiedler", "baseline"], config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
@@ -376,6 +389,9 @@ def main(config=None, skip_evaluation=False):
         len(wandb.config["selected_features"]),
         config["hidden_channels"],
         config["num_layers"],
+        act=config["activation"],
+        dropout=config["dropout"],
+        pool=config["aggr"],
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()
@@ -413,6 +429,7 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser(description="Train a GNN model to predict the algebraic connectivity of graphs.")
     args.add_argument("--skip-evaluation", action="store_true", help="Skip the evaluation step.")
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
+    args.add_argument("--no-wandb", action="store_true", help="Do not use W&B for logging.")
     args = args.parse_args()
 
     # Get available device.
@@ -422,14 +439,17 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             "seed": 42,
-            "architecture": "GraphSAGE",
-            "hidden_channels": 10,
-            "num_layers": 3,
+            "architecture": "GCN",
+            "hidden_channels": 64,
+            "num_layers": 5,
+            "activation": "relu",
+            "dropout": 0.0,
+            "aggr": "mean",
             "optimizer": "adam",
-            "learning_rate": 0.01,
+            "learning_rate": 0.001,
             "epochs": 500,
         }
-        run = main(global_config)
+        run = main(global_config, no_wandb=args.no_wandb, skip_evaluation=args.skip_evaluation)
         run.finish()
     else:
         run = main()
