@@ -1,8 +1,9 @@
 import multiprocessing as mp
 
 import networkx as nx
-import wandb
+import plotly.graph_objects as go
 import torch_geometric.utils as pygUtils
+import wandb
 from visualize import GraphVisualization
 
 
@@ -20,13 +21,18 @@ def graphs_to_tuple(nx_graphs):
     ]
 
 
-def create_graph_vis(G):
+def create_graph_vis(G, features=None):
     """Create a Plotly figure of a NetworkX graph."""
     pos = nx.spring_layout(G)
     vis = GraphVisualization(
         G, pos, node_text_position='top left', node_size=20,
     )
     fig = vis.create_figure()
+
+    if features:
+        bar_traces = add_feature_visualization(pos, features["data"], features["names"])
+        fig.add_traces(bar_traces)
+
     return fig
     # # Edges
     # edge_x = []
@@ -74,3 +80,13 @@ def create_graph_vis_parallel(graphs):
         graph_visuals = pool.imap(create_graph_vis, graphs, chunksize=100)
 
     return list(graph_visuals)
+
+
+def add_feature_visualization(pos, data, features):
+    # Create bar charts for each node
+    bar_charts = []
+    for i, p in pos.items():
+        bar_charts.append(
+            go.Bar(x=features, y=data[i], orientation='h')
+        )
+    return bar_charts
