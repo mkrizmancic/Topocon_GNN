@@ -20,7 +20,7 @@ parameters:
   optimizer:
     value: adam
   learning_rate:
-    values: [0.01, 0.05, 0.001]
+    values: [0.01, 0.001]
   epochs:
     value: 1000
 early_terminate:

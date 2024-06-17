@@ -1,6 +1,7 @@
 import argparse
 from collections import Counter
 import concurrent.futures
+import json
 import os
 import pathlib
 
@@ -325,6 +326,13 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
     err_mean = np.mean(df["abs(Error)"])
     err_stddev = np.std(df["abs(Error)"])
 
+    good_within = {
+        "99": len(df[df["Error %"].between(-1, 1)]) / len(df) * 100,
+        "95": len(df[df["Error %"].between(-5, 5)]) / len(df) * 100,
+        "90": len(df[df["Error %"].between(-10, 10)]) / len(df) * 100,
+        "80": len(df[df["Error %"].between(-20, 20)]) / len(df) * 100
+    }
+
     # Create a W&B table.
     table = wandb.Table(dataframe=df)
 
@@ -334,7 +342,7 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
     fig_rel_err = px.histogram(df, x="Error %")
 
     if not is_sweep:
-        print(f"Mean error: {err_mean:.4f}\n" f"Std. dev.: {err_stddev:.4f}\n")
+        print(f"Mean error: {err_mean:.4f}\n" f"Std. dev.: {err_stddev:.4f}\nError brackets: {json.dumps(good_within, indent=4)}\n")
         fig_abs_err.show()
         fig_rel_err.show()
         df = df.sort_values(by="Nodes")
@@ -343,6 +351,7 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
     results = {
         "mean_err": err_mean,
         "stddev_err": err_stddev,
+        "good_within": good_within,
         "fig_abs_err": fig_abs_err,
         "fig_rel_err": fig_rel_err,
         "table": table,
@@ -369,7 +378,7 @@ def main(config=None, skip_evaluation=False, no_wandb=False):
     }
 
     # Set up the run
-    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx", tags=["lambda2", "fiedler", "baseline"], config=config)
+    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx", tags=["lambda2", "baseline"], config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
@@ -414,7 +423,7 @@ def main(config=None, skip_evaluation=False, no_wandb=False):
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.log({"abs_err_hist": eval_results["fig_abs_err"], "rel_err_hist": eval_results["fig_rel_err"]})
-        run.log({"results_table": eval_results["table"]})
+        # run.log({"results_table": eval_results["table"]})
 
     if is_sweep:
         print(f"    ...DONE. "
@@ -439,15 +448,15 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             "seed": 42,
-            "architecture": "GCN",
-            "hidden_channels": 64,
+            "architecture": "GraphSAGE",
+            "hidden_channels": 32,
             "num_layers": 5,
-            "activation": "relu",
+            "activation": "tanh",
             "dropout": 0.0,
-            "aggr": "mean",
+            "aggr": "max",
             "optimizer": "adam",
-            "learning_rate": 0.001,
-            "epochs": 500,
+            "learning_rate": 0.01,
+            "epochs": 2000,
         }
         run = main(global_config, no_wandb=args.no_wandb, skip_evaluation=args.skip_evaluation)
         run.finish()

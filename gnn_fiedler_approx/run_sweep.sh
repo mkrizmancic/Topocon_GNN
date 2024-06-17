@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CONFIG_FILE="config/test_sweep.yaml"
+CONFIG_FILE="config/full_sweep.yaml"
 PROJECT="gnn_fiedler_approx"
 
 # Create the sweep and extract the sweep ID
