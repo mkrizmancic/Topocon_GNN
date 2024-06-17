@@ -1,6 +1,6 @@
 import argparse
 from collections import Counter
-import concurrent.futures
+import datetime
 import json
 import os
 import pathlib
@@ -17,15 +17,20 @@ from my_graphs_dataset import GraphDataset
 from torch.nn import Linear, ReLU
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential, global_mean_pool, global_max_pool, global_add_pool
+from torch_geometric.nn import (GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential,
+                                global_mean_pool, global_max_pool, global_add_pool)
 from utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple
 
 
-global_poolings = {
+GLOBAL_POOLINGS = {
     "mean": global_mean_pool,
     "max": global_max_pool,
     "add": global_add_pool
 }
+
+BEST_MODEL_PATH = pathlib.Path(__file__).parent / "models"
+BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
+BEST_MODEL_PATH /= "best_model.pth"
 
 # ***************************************
 # *************** MODELS ****************
@@ -64,7 +69,7 @@ class GNNWrapper(torch.nn.Module):
     def __init__(self, gnn_model, in_channels: int, hidden_channels: int, num_layers: int, pool="mean", **kwargs):
         super().__init__()
         self.gnn = gnn_model(in_channels, hidden_channels, num_layers, **kwargs)
-        self.pool = global_poolings[pool]
+        self.pool = GLOBAL_POOLINGS[pool]
         self.classifier = Linear(hidden_channels, 1)
 
     def forward(self, x, edge_index, batch):
@@ -72,6 +77,15 @@ class GNNWrapper(torch.nn.Module):
         x = self.pool(x, batch)
         x = self.classifier(x)
         return x
+
+    @property
+    def descriptive_name(self):
+        return (f"{self.gnn.__class__.__name__}-"
+                f"{self.gnn.num_layers}x{self.gnn.hidden_channels}-"
+                f"{self.gnn.act.__class__.__name__}-"
+                f"D{self.gnn.dropout.p:.2f}-"
+                f"{self.pool.__name__}")
+
 
 
 premade_gnns = {x.__name__: x for x in [GCN, GraphSAGE, GIN, GAT]}
@@ -81,7 +95,7 @@ custom_gnns = {x.__name__: x for x in [MyGCN]}
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
-def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_size=0, seed=42, is_sweep=False):
+def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_size=0, seed=42, suppress_output=False):
     dataset_config = {
         "name": "ConnectivityDataset",
         "selected_graphs": str(selected_graph_sizes),
@@ -96,7 +110,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
 
     # General information
-    if not is_sweep:
+    if not suppress_output:
         print()
         print(f"Dataset: {dataset}:")
         print("====================")
@@ -115,18 +129,17 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     train_dataset = dataset[:train_size]
     test_dataset = dataset[train_size:]
 
-    if not is_sweep:
-        train_counter = Counter([data.x.shape[0] for data in train_dataset])
-        test_counter = Counter([data.x.shape[0] for data in test_dataset])
+    if not suppress_output:
+        train_counter = Counter([data.x.shape[0] for data in train_dataset]) # type: ignore
+        test_counter = Counter([data.x.shape[0] for data in test_dataset]) # type: ignore
         print()
         print(f"Training dataset: {train_counter} ({train_counter.total()})")
         print(f"Testing dataset : {test_counter} ({test_counter.total()})")
 
     # Batch and load data.
-    # TODO: Batch size?
     batch_size = dataset_config["batch_size"] if dataset_config["batch_size"] > 0 else len(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False) # type: ignore
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
     train_batch = None
     test_batch = None
@@ -137,7 +150,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     train_data_obj = train_batch if train_batch is not None else train_loader
     test_data_obj = test_batch if test_batch is not None else test_loader
 
-    if not is_sweep:
+    if not suppress_output:
         print()
         print("Batches:")
         for step, data in enumerate(train_loader):
@@ -162,11 +175,12 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, **kwa
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             num_layers=num_layers,
-            **kwargs
-        ).to(device)
+            **kwargs,
+        )
     else:
         MyGNN = custom_gnns[architecture]
-        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * num_layers).to(device)
+        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * num_layers)
+    model = model.to(device)
     return model
 
 
@@ -225,12 +239,15 @@ def do_test(model, data, criterion):
     return loss
 
 
-def train(model, optimizer, criterion, train_data_obj, test_data_obj, num_epochs=100, is_sweep=False):
-    # GLOBALS: device, dataset, train_data_obj, test_data_obj
+def train(
+    model, optimizer, criterion, train_data_obj, test_data_obj, num_epochs=100, suppress_output=False, save_best=False
+):
+    # GLOBALS: device
 
     # Prepare for training.
     train_losses = np.zeros(num_epochs)
     test_losses = np.zeros(num_epochs)
+    best_loss = float("inf")
 
     # Start the training loop with timer.
     training_timer = codetiming.Timer(logger=None)
@@ -248,8 +265,13 @@ def train(model, optimizer, criterion, train_data_obj, test_data_obj, num_epochs
         test_losses[epoch - 1] = test_loss
         wandb.log({"train_loss": train_loss, "test_loss": test_loss})
 
+        # Save the best model.
+        if save_best and epoch >= 0.3 * num_epochs and test_loss < best_loss:
+            torch.save(model.state_dict(), BEST_MODEL_PATH)
+            best_loss = test_loss
+
         # Print the losses every 10 epochs.
-        if epoch % 10 == 0 and not is_sweep:
+        if epoch % 10 == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
                 f"Train Loss: {train_loss:.4f}, "
@@ -292,18 +314,18 @@ def eval_batch(model, batch, plot_graphs=False):
 
     # Store to pandas DataFrame.
     return pd.DataFrame(
-                {
-                    "GraphVis": graph_visuals,
-                    "Graph": graphs,
-                    "Nodes": node_nums,
-                    "Edges": edge_nums,
-                    "True": ground_truth,
-                    "Predicted": predictions,
-                }
-            )
+        {
+            "GraphVis": graph_visuals,
+            "Graph": graphs,
+            "Nodes": node_nums,
+            "Edges": edge_nums,
+            "True": ground_truth,
+            "Predicted": predictions,
+        }
+    )
 
 
-def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
+def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
     # GLOBALS: dataset_config, train_loader, test_loader
 
     # Evaluate the model on the test set.
@@ -330,7 +352,7 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
         "99": len(df[df["Error %"].between(-1, 1)]) / len(df) * 100,
         "95": len(df[df["Error %"].between(-5, 5)]) / len(df) * 100,
         "90": len(df[df["Error %"].between(-10, 10)]) / len(df) * 100,
-        "80": len(df[df["Error %"].between(-20, 20)]) / len(df) * 100
+        "80": len(df[df["Error %"].between(-20, 20)]) / len(df) * 100,
     }
 
     # Create a W&B table.
@@ -341,8 +363,12 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
     fig_abs_err = px.histogram(df, x="Error")
     fig_rel_err = px.histogram(df, x="Error %")
 
-    if not is_sweep:
-        print(f"Mean error: {err_mean:.4f}\n" f"Std. dev.: {err_stddev:.4f}\nError brackets: {json.dumps(good_within, indent=4)}\n")
+    if not suppress_output:
+        print(
+            f"Mean error: {err_mean:.4f}\n"
+            f"Std. dev.: {err_stddev:.4f}\n"
+            f"Error brackets: {json.dumps(good_within, indent=4)}\n"
+        )
         fig_abs_err.show()
         fig_rel_err.show()
         df = df.sort_values(by="Nodes")
@@ -359,11 +385,14 @@ def evaluate(model, test_data, plot_graphs=False, is_sweep=False):
     return results
 
 
-def main(config=None, skip_evaluation=False, no_wandb=False):
+def main(config=None, evaluation=False, no_wandb=False, is_best_run=False):
     # GLOBALS: device
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
+    tags = ["lambda2", "baseline"]
+    if is_best_run:
+        tags.append("BEST")
 
     # Set up dataset.
     selected_graph_sizes = {
@@ -378,14 +407,14 @@ def main(config=None, skip_evaluation=False, no_wandb=False):
     }
 
     # Set up the run
-    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx", tags=["lambda2", "baseline"], config=config)
+    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
 
     # Load the dataset.
     train_data_obj, test_data_obj, dataset_config, features = load_dataset(
-        selected_graph_sizes, selected_features=config.get("selected_features", []), is_sweep=is_sweep
+        selected_graph_sizes, selected_features=config.get("selected_features", []), suppress_output=is_sweep
     )
 
     wandb.config["dataset"] = dataset_config
@@ -407,7 +436,9 @@ def main(config=None, skip_evaluation=False, no_wandb=False):
 
     # Run training.
     train_results = train(
-        model, optimizer, criterion, train_data_obj, test_data_obj, config["epochs"], is_sweep=is_sweep
+        model, optimizer, criterion, train_data_obj, test_data_obj, config["epochs"],
+        suppress_output=is_sweep,
+        save_best=is_best_run
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
     run.summary["best_test_loss"] = min(train_results["test_losses"])
@@ -418,27 +449,45 @@ def main(config=None, skip_evaluation=False, no_wandb=False):
         )
 
     # Run evaluation.
-    if not skip_evaluation:
-        eval_results = evaluate(model, test_data_obj, plot_graphs=not is_sweep, is_sweep=is_sweep)
+    if evaluation != "none":
+        if evaluation == "best":
+            model.load_state_dict(torch.load(BEST_MODEL_PATH))
+            model.eval()
+
+        eval_results = evaluate(model, test_data_obj, plot_graphs=is_best_run, suppress_output=is_sweep)
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
+        run.summary["good_within"] = eval_results["good_within"]
         run.log({"abs_err_hist": eval_results["fig_abs_err"], "rel_err_hist": eval_results["fig_rel_err"]})
-        # run.log({"results_table": eval_results["table"]})
+
+        if evaluation in  ["detailed", "best"]:
+            run.log({"results_table": eval_results["table"]})
+
+        if is_best_run:
+            # Name the model with the current time and date to make it uniq
+            model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y%H%M')}"
+            artifact = wandb.Artifact(name=model_name, type='model')
+            artifact.add_file(str(BEST_MODEL_PATH))
+            run.log_artifact(artifact)
 
     if is_sweep:
-        print(f"    ...DONE. "
-              f"Mean error: {eval_results['mean_err']:.4f}, "
-              f"Std. dev.: {eval_results['stddev_err']:.4f}, "
-              f"Duration: {train_results['duration']:.4f} s.")
+        print(
+            f"    ...DONE. "
+            f"Mean error: {eval_results['mean_err']:.4f}, "
+            f"Std. dev.: {eval_results['stddev_err']:.4f}, "
+            f"Duration: {train_results['duration']:.4f} s."
+        )
 
     return run
 
 
 if __name__ == "__main__":
     args = argparse.ArgumentParser(description="Train a GNN model to predict the algebraic connectivity of graphs.")
-    args.add_argument("--skip-evaluation", action="store_true", help="Skip the evaluation step.")
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
+    args.add_argument("--evaluation", action="store", choices=["basic", "best", "detailed", "none"],
+                      help="Evaluate the model.")
     args.add_argument("--no-wandb", action="store_true", help="Do not use W&B for logging.")
+    args.add_argument("--best", action="store_true", help="Plot the graphs with the best model.")
     args = args.parse_args()
 
     # Get available device.
@@ -458,7 +507,7 @@ if __name__ == "__main__":
             "learning_rate": 0.01,
             "epochs": 2000,
         }
-        run = main(global_config, no_wandb=args.no_wandb, skip_evaluation=args.skip_evaluation)
+        run = main(global_config, evaluation=args.evaluation, no_wandb=args.no_wandb, is_best_run=args.best)
         run.finish()
     else:
         run = main()
