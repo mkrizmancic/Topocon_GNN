@@ -17,7 +17,7 @@ from my_graphs_dataset import GraphDataset
 from torch.nn import Linear, ReLU
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import (GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential,
+from torch_geometric.nn import (MLP, GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential,
                                 global_mean_pool, global_max_pool, global_add_pool)
 from utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple
 
@@ -68,7 +68,11 @@ class MyGCN(torch.nn.Module):
 class GNNWrapper(torch.nn.Module):
     def __init__(self, gnn_model, in_channels: int, hidden_channels: int, num_layers: int, pool="mean", **kwargs):
         super().__init__()
-        self.gnn = gnn_model(in_channels, hidden_channels, num_layers, **kwargs)
+        self.gnn = gnn_model(in_channels=in_channels,
+                             hidden_channels=hidden_channels,
+                             out_channels=hidden_channels,
+                             num_layers=num_layers,
+                             **kwargs)
         self.pool = GLOBAL_POOLINGS[pool]
         self.classifier = Linear(hidden_channels, 1)
 
@@ -88,7 +92,7 @@ class GNNWrapper(torch.nn.Module):
 
 
 
-premade_gnns = {x.__name__: x for x in [GCN, GraphSAGE, GIN, GAT]}
+premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT]}
 custom_gnns = {x.__name__: x for x in [MyGCN]}
 
 
@@ -385,7 +389,7 @@ def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
     return results
 
 
-def main(config=None, evaluation=False, no_wandb=False, is_best_run=False):
+def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
     # GLOBALS: device
 
     is_sweep = config is None
@@ -428,7 +432,7 @@ def main(config=None, evaluation=False, no_wandb=False, is_best_run=False):
         config["hidden_channels"],
         config["num_layers"],
         act=config["activation"],
-        dropout=config["dropout"],
+        dropout=float(config["dropout"]),
         pool=config["aggr"],
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
@@ -490,6 +494,10 @@ if __name__ == "__main__":
     args.add_argument("--best", action="store_true", help="Plot the graphs with the best model.")
     args = args.parse_args()
 
+    if not args.best and args.evaluation == "best":
+        print("Cannot evaluate the best model without the --best flag.")
+        exit(1)
+
     # Get available device.
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loaded torch. Using *{device}* device.")
@@ -497,7 +505,7 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             "seed": 42,
-            "architecture": "GraphSAGE",
+            "architecture": "MLP",
             "hidden_channels": 32,
             "num_layers": 5,
             "activation": "tanh",
