@@ -1,2 +1,4 @@
 Dataset/processed/
 wandb/
+results/
+models/
