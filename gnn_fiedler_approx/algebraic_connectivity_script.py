@@ -373,9 +373,16 @@ def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
     table = wandb.Table(dataframe=df)
 
     # Print and plot.
-    # df = df.sort_values(by="abs(Error)")
     fig_abs_err = px.histogram(df, x="Error")
     fig_rel_err = px.histogram(df, x="Error %")
+
+    plot_df = pd.DataFrame()
+    plot_df["abs(Error %)"] = np.abs(df["Error %"])
+    plot_df.sort_values(by="abs(Error %)", inplace=True)
+    plot_df.reset_index(drop=True, inplace=True)
+    fig_err_curve = px.line(plot_df, x="abs(Error %)", y=(plot_df.index + 1) / len(plot_df) * 100, title="Error curve")
+    fig_err_curve.update_xaxes(showspikes=True, tickvals=[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
     if not suppress_output:
         print(
@@ -385,6 +392,7 @@ def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
         )
         fig_abs_err.show()
         fig_rel_err.show()
+        fig_err_curve.show()
         df = df.sort_values(by="Nodes")
         print(df)
 
@@ -394,6 +402,7 @@ def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
         "good_within": good_within,
         "fig_abs_err": fig_abs_err,
         "fig_rel_err": fig_rel_err,
+        "fig_err_curve": fig_err_curve,
         "table": table,
     }
     return results
