@@ -11,7 +11,11 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "args": ["--standalone", "--no-wandb", "--skip-evaluation"]
+            "args": [
+                "--standalone", 
+                "--evaluation", "best",
+                "--best"
+            ]
         }
     ]
 }

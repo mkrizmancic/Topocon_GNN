@@ -84,11 +84,21 @@ class GNNWrapper(torch.nn.Module):
 
     @property
     def descriptive_name(self):
-        return (f"{self.gnn.__class__.__name__}-"
-                f"{self.gnn.num_layers}x{self.gnn.hidden_channels}-"
-                f"{self.gnn.act.__class__.__name__}-"
-                f"D{self.gnn.dropout.p:.2f}-"
-                f"{self.pool.__name__}")
+        name = [f"{self.gnn.__class__.__name__}"]
+        if hasattr(self.gnn, "channel_list"):
+            name.append(f"{self.gnn.num_layers}x{self.gnn.channel_list[-1]}")
+        else:
+            name.append(f"{self.gnn.num_layers}x{self.gnn.hidden_channels}")
+        name.append(f"{self.gnn.act.__class__.__name__}")
+        if isinstance(self.gnn.dropout, torch.nn.Dropout):
+            name.append(f"D{self.gnn.dropout.p:.2f}")
+        else:
+            name.append(f"D{self.gnn.dropout[0]:.2f}")
+        name.append(f"{self.pool.__name__}")
+
+        name = "-".join(name)
+
+        return name
 
 
 
@@ -504,7 +514,6 @@ if __name__ == "__main__":
 
     if args.standalone:
         global_config = {
-            "seed": 42,
             "architecture": "MLP",
             "hidden_channels": 32,
             "num_layers": 5,
