@@ -63,7 +63,8 @@ class timeout(contextlib.ContextDecorator):
 
 # Define the list of functions to be tested
 functions = {
-    'algebraic_connectivity': nx.algebraic_connectivity,
+    'algebraic_connectivity': lambda x: nx.laplacian_spectrum(x)[1],
+    'degree': lambda G: G.degree,
     'average_neighbor_degree': nx.average_neighbor_degree,
     'degree_centrality': nx.degree_centrality,
     'eigenvector_centrality': nx.eigenvector_centrality,
@@ -131,7 +132,7 @@ results = []
 
 # Test each function on each graph size
 for size in tqdm(graph_sizes):
-    num_graphs = 5 if size < 50 else 1
+    num_graphs = 20  # 5 if size < 50 else 5
     for i in range(num_graphs):
         # Generate a random graph
         G = nx.connected_watts_strogatz_graph(size, random.randint(2, int(math.sqrt(size))), random.random())

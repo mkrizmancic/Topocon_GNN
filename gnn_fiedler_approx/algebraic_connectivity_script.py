@@ -141,7 +141,10 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
 
     train_size = round(dataset_config["split"] * len(dataset))
     train_dataset = dataset[:train_size]
-    test_dataset = dataset[train_size:]
+    if len(dataset) - train_size > 0:
+        test_dataset = dataset[train_size:]
+    else:
+        test_dataset = train_dataset
 
     if not suppress_output:
         train_counter = Counter([data.x.shape[0] for data in train_dataset]) # type: ignore
@@ -155,14 +158,12 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
-    train_batch = None
-    test_batch = None
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
     test_batch = next(iter(test_loader))
 
-    train_data_obj = train_batch if train_batch is not None else train_loader
-    test_data_obj = test_batch if test_batch is not None else test_loader
+    train_data_obj = train_batch if dataset_config["batch_size"] == 0 else train_loader
+    test_data_obj = test_batch if dataset_config["batch_size"] == 0 else test_loader
 
     if not suppress_output:
         print()
@@ -174,7 +175,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
             print(data)
             print()
 
-    return train_data_obj, test_data_obj, dataset_config, features
+    return train_data_obj, test_data_obj, dataset_config, features, dataset.num_features
 
 
 # ***************************************
@@ -436,7 +437,7 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
         print(f"Running sweep with config: {config}...")
 
     # Load the dataset.
-    train_data_obj, test_data_obj, dataset_config, features = load_dataset(
+    train_data_obj, test_data_obj, dataset_config, features, feature_dim = load_dataset(
         selected_graph_sizes, selected_features=config.get("selected_features", []), suppress_output=is_sweep
     )
 
@@ -447,7 +448,7 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
     # Set up the model, optimizer, and criterion.
     model = generate_model(
         config["architecture"],
-        len(wandb.config["selected_features"]),
+        feature_dim,
         config["hidden_channels"],
         config["num_layers"],
         act=config["activation"],
