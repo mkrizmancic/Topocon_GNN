@@ -89,10 +89,19 @@ class ConnectivityDataset(InMemoryDataset):
         self.save(data_list, self.processed_paths[0])
 
     # Define features in use.
+    @staticmethod
+    def one_hot_degree(G):
+        degrees = G.degree
+        ohd = {}
+        for node, deg in degrees:
+            ohd[node] = [1.0 if i == deg else 0.0 for i in range(10)]
+        return ohd
+
     feature_functions = {
         "degree": lambda x: x.degree,
         "degree_centrality": nx.degree_centrality,
         "betweenness_centrality": nx.betweenness_centrality,
+        # "one_hot_degree": one_hot_degree,
     }
 
     def make_data(self, G):
@@ -102,17 +111,6 @@ class ConnectivityDataset(InMemoryDataset):
             feature_val = self.feature_functions[feature](G)
             for node in G.nodes():
                 G.nodes[node][feature] = feature_val[node]
-
-        # for node in G.nodes():
-        #     G.nodes[node]["degree"] = G.degree(node)
-
-        # degree_cent = nx.degree_centrality(G)
-        # for node in G.nodes():
-        #     G.nodes[node]["degree_centrality"] = degree_cent[node]
-
-        # between_cent = nx.betweenness_centrality(G)
-        # for node in G.nodes():
-        #     G.nodes[node]["betweenness_centrality"] = between_cent[node]
 
         torch_G = pygUtils.from_networkx(G, group_node_attrs=self.features)
         torch_G.y = torch.tensor(self.algebraic_connectivity(G), dtype=torch.float32)

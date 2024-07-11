@@ -482,7 +482,9 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.summary["good_within"] = eval_results["good_within"]
-        run.log({"abs_err_hist": eval_results["fig_abs_err"], "rel_err_hist": eval_results["fig_rel_err"]})
+        run.log({"abs_err_hist": eval_results["fig_abs_err"],
+                 "rel_err_hist": eval_results["fig_rel_err"],
+                 "err_curve": eval_results["fig_err_curve"]})
 
         if evaluation in  ["detailed", "best"]:
             run.log({"results_table": eval_results["table"]})
