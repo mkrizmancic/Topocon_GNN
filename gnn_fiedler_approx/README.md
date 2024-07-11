@@ -30,3 +30,38 @@
     - When running a sweep, the `global_config` is automatically replaced by the sweep configuration given by the sweep agent and the console output is limited.
 8. **Global variables:**
     - Watch out. There are still some global variables in the code. They should be documented where they are used. They will be removed in the future.
+
+
+# Code snippets
+### Initializing and printing weights and biases
+There is no direct easy way to initialize and print GNNs weights and biases. It has to be done by accessing low-level elements of models. Below is an example for a simple GCN model.
+
+```python
+# Initialization
+model = GNNWrapper("GCN", ...)
+torch.nn.init.xavier_uniform_(model.gnn.convs[0].lin.weight)
+torch.nn.init.zeros_(model.gnn.convs[0].bias)
+torch.nn.init.ones_(model.gnn.lin.weight)
+
+# Printing
+def print_weights(model):
+    def print_lin_layer(lin):
+        weights = "\n\t".join(str(lin.weight).split("\n"))
+        print(f"Weights:\n\t{weights}")
+        if hasattr(lin, "bias") and lin.bias is not None:
+            bias = "\n\t".join(str(lin.bias).split("\n"))
+            print(f"Bias:\n\t{bias}")
+
+    def print_gnn_layer(layer):
+        print_lin_layer(layer.lin)
+        bias = "\n\t".join(str(layer.bias).split("\n"))
+        print(f"Bias:\n\t{bias}")
+        print()
+
+    for layer in model.mp_layers._modules.values():
+        if isinstance(layer, GCNConv):
+            print(layer)
+            print_gnn_layer(layer)
+    print(model.lin)
+    print_lin_layer(model.lin)
+```
