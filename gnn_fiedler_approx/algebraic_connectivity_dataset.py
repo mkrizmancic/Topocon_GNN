@@ -100,7 +100,11 @@ class ConnectivityDataset(InMemoryDataset):
     feature_functions = {
         "degree": lambda x: x.degree,
         "degree_centrality": nx.degree_centrality,
-        "betweenness_centrality": nx.betweenness_centrality,
+        "core_number": nx.core_number,
+        "triangles": nx.triangles,
+        "clustering": nx.clustering,
+        "close_centrality": nx.closeness_centrality,
+        # "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
     }
 
@@ -169,7 +173,7 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes)
 
     with codetiming.Timer():
-        dataset = ConnectivityDataset(root, loader, selected_features=["degree"])
+        dataset = ConnectivityDataset(root, loader, selected_features=[])
 
     print()
     print(f"Dataset: {dataset}:")

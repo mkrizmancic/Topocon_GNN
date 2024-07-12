@@ -14,7 +14,8 @@
             "args": [
                 "--standalone", 
                 "--evaluation", "best",
-                "--best"
+                "--best",
+                // "--no-wandb"
             ]
         }
     ]

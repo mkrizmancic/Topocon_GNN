@@ -1,6 +1,8 @@
 #!/bin/bash
 
-CONFIG_FILE="config/baseline_sweep.yaml"
+source /home/marko/PROJECTS/graphs_venv/bin/activate
+
+CONFIG_FILE="config/new_feature_sweep.yaml"
 PROJECT="gnn_fiedler_approx"
 
 # Create the sweep and extract the sweep ID

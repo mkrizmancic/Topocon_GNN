@@ -510,9 +510,16 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
 if __name__ == "__main__":
     args = argparse.ArgumentParser(description="Train a GNN model to predict the algebraic connectivity of graphs.")
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
+    # These are the options for model performance evaluation.
+    # - none: Evaluation is skipped.
+    # - basic: Will calculate all metrics and plot the graphs, but will not upload the results table to W&B.
+    # - detailed: Same as basic, but will also upload the results table to W&B.
+    # - best: Will evaluate the best model, plot test dataset graphs in the results table and upload it to W&B.
     args.add_argument("--evaluation", action="store", choices=["basic", "best", "detailed", "none"],
                       help="Evaluate the model.")
     args.add_argument("--no-wandb", action="store_true", help="Do not use W&B for logging.")
+    # If best is set, the script will evaluate the best model, add the BEST tag, plot the graphs inside the results
+    # table and upload everything to W&B.
     args.add_argument("--best", action="store_true", help="Plot the graphs with the best model.")
     args = args.parse_args()
 
@@ -526,7 +533,7 @@ if __name__ == "__main__":
 
     if args.standalone:
         global_config = {
-            "architecture": "MLP",
+            "architecture": "GraphSAGE",
             "hidden_channels": 32,
             "num_layers": 5,
             "activation": "tanh",
