@@ -8,14 +8,14 @@
             "name": "Python Debugger: Current File with Arguments",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "/home/marko/PROJECTS/Topocon_GNN/gnn_fiedler_approx/algebraic_connectivity_script.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "--standalone", 
-                "--evaluation", "best",
-                "--best",
-                // "--no-wandb"
+                "--standalone",
+                "--eval-type", "basic",
+                "--eval-target", "best",
+                "--no-wandb"
             ]
         }
     ]

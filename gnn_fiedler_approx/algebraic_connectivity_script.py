@@ -1,6 +1,7 @@
 import argparse
 from collections import Counter
 import datetime
+import enum
 import json
 import os
 import pathlib
@@ -31,6 +32,16 @@ GLOBAL_POOLINGS = {
 BEST_MODEL_PATH = pathlib.Path(__file__).parent / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_PATH /= "best_model.pth"
+
+class EvalType(enum.Enum):
+    NONE = 0
+    BASIC = 1
+    DETAILED = 2
+    FULL = 3
+
+class EvalTarget(enum.Enum):
+    LAST = "last"
+    BEST = "best"
 
 # ***************************************
 # *************** MODELS ****************
@@ -409,8 +420,11 @@ def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
     return results
 
 
-def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
+def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_wandb=False, is_best_run=False):
     # GLOBALS: device
+
+    save_best = eval_target == EvalTarget.BEST
+    plot_graphs = eval_type == EvalType.FULL
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
@@ -462,7 +476,7 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
     train_results = train(
         model, optimizer, criterion, train_data_obj, test_data_obj, config["epochs"],
         suppress_output=is_sweep,
-        save_best=is_best_run
+        save_best=save_best
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
     run.summary["best_test_loss"] = min(train_results["test_losses"])
@@ -473,12 +487,12 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
         )
 
     # Run evaluation.
-    if evaluation != "none":
-        if evaluation == "best":
+    if eval_type != EvalType.NONE:
+        if eval_target == EvalTarget.BEST:
             model.load_state_dict(torch.load(BEST_MODEL_PATH))
             model.eval()
 
-        eval_results = evaluate(model, test_data_obj, plot_graphs=is_best_run, suppress_output=is_sweep)
+        eval_results = evaluate(model, test_data_obj, plot_graphs=plot_graphs, suppress_output=is_sweep)
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.summary["good_within"] = eval_results["good_within"]
@@ -486,7 +500,7 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
                  "rel_err_hist": eval_results["fig_rel_err"],
                  "err_curve": eval_results["fig_err_curve"]})
 
-        if evaluation in  ["detailed", "best"]:
+        if eval_type.value > EvalType.BASIC.value:
             run.log({"results_table": eval_results["table"]})
 
         if is_best_run:
@@ -497,13 +511,11 @@ def main(config=None, evaluation="basic", no_wandb=False, is_best_run=False):
             run.log_artifact(artifact)
 
     if is_sweep:
-        print(
-            f"    ...DONE. "
-            f"Mean error: {eval_results['mean_err']:.4f}, "
-            f"Std. dev.: {eval_results['stddev_err']:.4f}, "
-            f"Duration: {train_results['duration']:.4f} s."
-        )
-
+        print("    ...DONE.")
+        if eval_type != EvalType.NONE:
+            print(f"Mean error: {eval_results['mean_err']:.4f}")
+            print(f"Std. dev.: {eval_results['stddev_err']:.4f}")
+        print(f"Duration: {train_results['duration']:.4f} s.")
     return run
 
 
@@ -514,18 +526,20 @@ if __name__ == "__main__":
     # - none: Evaluation is skipped.
     # - basic: Will calculate all metrics and plot the graphs, but will not upload the results table to W&B.
     # - detailed: Same as basic, but will also upload the results table to W&B.
-    # - best: Will evaluate the best model, plot test dataset graphs in the results table and upload it to W&B.
-    args.add_argument("--evaluation", action="store", choices=["basic", "best", "detailed", "none"],
-                      help="Evaluate the model.")
+    # - full: Same as detailed, but will also plot the graphs inside the results table.
+    args.add_argument("--eval-type", action="store", choices=["basic", "detailed", "full", "none"],
+                      help="Level of detail for model evaluation.")
+    # Evaluate the model from the last epoch or the best.
+    args.add_argument("--eval-target", action="store", choices=["best", "last"], default="last",
+                      help="Which model to evaluate.")
     args.add_argument("--no-wandb", action="store_true", help="Do not use W&B for logging.")
     # If best is set, the script will evaluate the best model, add the BEST tag, plot the graphs inside the results
     # table and upload everything to W&B.
-    args.add_argument("--best", action="store_true", help="Plot the graphs with the best model.")
+    args.add_argument("--best", action="store_true", help="Mark and store the best model.")
     args = args.parse_args()
 
-    if not args.best and args.evaluation == "best":
-        print("Cannot evaluate the best model without the --best flag.")
-        exit(1)
+    eval_type = EvalType[args.eval_type.upper()] if args.eval_type else EvalType.NONE
+    eval_target = EvalTarget[args.eval_target.upper()]
 
     # Get available device.
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -543,7 +557,7 @@ if __name__ == "__main__":
             "learning_rate": 0.01,
             "epochs": 2000,
         }
-        run = main(global_config, evaluation=args.evaluation, no_wandb=args.no_wandb, is_best_run=args.best)
+        run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()
     else:
-        run = main()
+        run = main(None, eval_type, eval_target, False, args.best)
