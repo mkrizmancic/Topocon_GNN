@@ -104,7 +104,7 @@ class ConnectivityDataset(InMemoryDataset):
         "triangles": nx.triangles,
         "clustering": nx.clustering,
         "close_centrality": nx.closeness_centrality,
-        # "betweenness_centrality": nx.betweenness_centrality,
+        "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
     }
 

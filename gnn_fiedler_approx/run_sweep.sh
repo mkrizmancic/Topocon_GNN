@@ -2,8 +2,8 @@
 
 source /home/marko/PROJECTS/graphs_venv/bin/activate
 
-CONFIG_FILE="config/new_feature_sweep.yaml"
-PROJECT="gnn_fiedler_approx"
+CONFIG_FILE="config/betweenness_ablation.yaml"
+PROJECT="gnn_fiedler_approx_v2"
 
 # Create the sweep and extract the sweep ID
 SWEEP_ID=$(wandb sweep --project $PROJECT $CONFIG_FILE 2>&1 | tee wandb_sweep.out | grep 'Run' | awk '{print $8}')

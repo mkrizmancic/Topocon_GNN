@@ -428,7 +428,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["lambda2", "baseline"]
+    tags = ["betweenness_ablation"]
     if is_best_run:
         tags.append("BEST")
 
@@ -445,7 +445,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     }
 
     # Set up the run
-    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx", tags=tags, config=config)
+    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
