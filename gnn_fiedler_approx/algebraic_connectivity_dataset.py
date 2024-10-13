@@ -130,6 +130,7 @@ class ConnectivityDataset(InMemoryDataset):
         mask = np.array([name in selected_features for name in self.features])
         # FIXME: This is not a proper way, but I don't know what else to do.
         # https://github.com/pyg-team/pytorch_geometric/discussions/7684
+        assert self._data is not None
         self._data.x = self._data.x[:, mask]
 
     @staticmethod

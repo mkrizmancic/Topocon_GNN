@@ -186,7 +186,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
             print(data)
             print()
 
-    return train_data_obj, test_data_obj, dataset_config, features, dataset.num_features
+    return train_data_obj, test_data_obj, dataset_config, features, dataset.num_features  # type: ignore
 
 
 # ***************************************
@@ -210,10 +210,10 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, **kwa
     return model
 
 
-def generate_optimizer(model, optimizer, lr):
+def generate_optimizer(model, optimizer, lr, **kwargs):
     """Generate optimizer object based on the model and hyperparameters."""
     if optimizer == "adam":
-        return torch.optim.Adam(model.parameters(), lr=lr)
+        return torch.optim.Adam(model.parameters(), lr=lr, **kwargs)
     else:
         raise ValueError("Only Adam optimizer is currently supported.")
 
@@ -221,7 +221,7 @@ def generate_optimizer(model, optimizer, lr):
 def training_pass(model, batch, optimizer, criterion):
     """Perofrm a single training pass over the batch."""
     data = batch.to(device)  # Move to CUDA if available.
-    out = model.forward(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
+    out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
     loss = criterion(out.squeeze(), data.y)  # Compute the loss.
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
@@ -232,7 +232,7 @@ def testing_pass(model, batch, criterion):
     """Perform a single testing pass over the batch."""
     with torch.no_grad():
         data = batch.to(device)
-        out = model.forward(data.x, data.edge_index, batch=data.batch)
+        out = model(data.x, data.edge_index, batch=data.batch)
         loss = criterion(out.squeeze(), data.y).item()  # Compute the loss.
     return loss
 
@@ -255,8 +255,10 @@ def do_test(model, data, criterion):
     model.eval()
 
     if isinstance(data, DataLoader):
+        avg_loss = 0
         for batch in data:
-            loss = testing_pass(model, batch, criterion)
+            avg_loss += testing_pass(model, batch, criterion)
+        loss = avg_loss / len(data)
     elif isinstance(data, Data):
         loss = testing_pass(model, data, criterion)
     else:
