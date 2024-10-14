@@ -12,6 +12,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
+import torchexplorer
 import wandb
 from algebraic_connectivity_dataset import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
@@ -226,6 +227,7 @@ def training_pass(model, batch, optimizer, criterion):
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
     optimizer.zero_grad()  # Clear gradients.
+    return loss.item()
 
 
 def testing_pass(model, batch, criterion):
@@ -242,12 +244,16 @@ def do_train(model, data, optimizer, criterion):
     model.train()
 
     if isinstance(data, DataLoader):
+        avg_loss = 0
         for batch in data:  # Iterate in batches over the training dataset.
-            training_pass(model, batch, optimizer, criterion)
+            avg_loss += training_pass(model, batch, optimizer, criterion)
+        loss = avg_loss / len(data)
     elif isinstance(data, Data):
-        training_pass(model, data, optimizer, criterion)
+        loss = training_pass(model, data, optimizer, criterion)
     else:
         raise ValueError("Data must be a DataLoader or a Batch object.")
+
+    return loss
 
 
 def do_test(model, data, criterion):
@@ -284,8 +290,7 @@ def train(
     epoch_timer.start()
     for epoch in range(1, num_epochs + 1):
         # Perform one pass over the training set and then test on both sets.
-        do_train(model, train_data_obj, optimizer, criterion)
-        train_loss = do_test(model, train_data_obj, criterion)
+        train_loss = do_train(model, train_data_obj, optimizer, criterion)
         test_loss = do_test(model, test_data_obj, criterion)
 
         # Store the losses.
@@ -330,6 +335,7 @@ def eval_batch(model, batch, plot_graphs=False):
     ground_truth = data.y.cpu().numpy()
 
     # Extract graphs and create visualizations.
+    # TODO: These two lines are very slow.
     nx_graphs = extract_graphs_from_batch(data)
     graphs, node_nums, edge_nums = zip(*graphs_to_tuple(nx_graphs))
     # FIXME: This is the only way to parallelize in Jupyter but runs out of memory.
@@ -353,7 +359,7 @@ def eval_batch(model, batch, plot_graphs=False):
     )
 
 
-def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
+def evaluate(model, test_data, plot_graphs=False, make_table=False, suppress_output=False):
     # GLOBALS: dataset_config, train_loader, test_loader
 
     # Evaluate the model on the test set.
@@ -384,7 +390,7 @@ def evaluate(model, test_data, plot_graphs=False, suppress_output=False):
     }
 
     # Create a W&B table.
-    table = wandb.Table(dataframe=df)
+    table = wandb.Table(dataframe=df) if make_table else None
 
     # Print and plot.
     fig_abs_err = px.histogram(df, x="Error")
@@ -427,6 +433,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     save_best = eval_target == EvalTarget.BEST
     plot_graphs = eval_type == EvalType.FULL
+    make_table = eval_type.value > EvalType.BASIC.value
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
@@ -447,6 +454,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     }
 
     # Set up the run
+    torchexplorer.setup()
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
@@ -474,6 +482,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()
 
+    wandb.watch(model, criterion, log="all", log_freq=100)
+    # torchexplorer.watch(model, backend="wandb")
+
     # Run training.
     train_results = train(
         model, optimizer, criterion, train_data_obj, test_data_obj, config["epochs"],
@@ -494,7 +505,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             model.load_state_dict(torch.load(BEST_MODEL_PATH))
             model.eval()
 
-        eval_results = evaluate(model, test_data_obj, plot_graphs=plot_graphs, suppress_output=is_sweep)
+        eval_results = evaluate(model, test_data_obj, plot_graphs, make_table, suppress_output=is_sweep)
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.summary["good_within"] = eval_results["good_within"]
