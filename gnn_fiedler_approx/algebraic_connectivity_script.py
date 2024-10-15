@@ -16,7 +16,6 @@ import torchexplorer
 import wandb
 from algebraic_connectivity_dataset import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
-from torch.nn import Linear, ReLU
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import (MLP, GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential,
@@ -58,11 +57,11 @@ class MyGCN(torch.nn.Module):
                 layers.append((GCNConv(input_channels, layer_size), "x, edge_index -> x"))
             else:
                 layers.append((GCNConv(mp_layers[i - 1], layer_size), "x, edge_index -> x"))
-            layers.append(ReLU())
+            layers.append(torch.nn.ReLU())
         self.mp_layers = Sequential("x, edge_index", layers)
 
         # Final readout layer
-        self.lin = Linear(mp_layers[-1], 1)
+        self.lin = torch.nn.Linear(mp_layers[-1], 1)
 
     def forward(self, x, edge_index, batch):
         # 1. Obtain node embeddings
@@ -78,15 +77,23 @@ class MyGCN(torch.nn.Module):
 
 
 class GNNWrapper(torch.nn.Module):
-    def __init__(self, gnn_model, in_channels: int, hidden_channels: int, num_layers: int, pool="mean", **kwargs):
+    def __init__(self, gnn_model, in_channels: int, hidden_channels: int, gnn_layers: int, mlp_layers: int=1, pool="mean", **kwargs):
         super().__init__()
         self.gnn = gnn_model(in_channels=in_channels,
                              hidden_channels=hidden_channels,
                              out_channels=hidden_channels,
-                             num_layers=num_layers,
+                             num_layers=gnn_layers,
                              **kwargs)
         self.pool = GLOBAL_POOLINGS[pool]
-        self.classifier = Linear(hidden_channels, 1)
+        # self.classifier = torch.nn.Linear(hidden_channels, 1)
+        mlp_layer_list = []
+        for i in range(mlp_layers):
+            if i < mlp_layers - 1:
+                mlp_layer_list.append(torch.nn.Linear(hidden_channels, hidden_channels))
+                mlp_layer_list.append(torch.nn.ReLU())
+            else:
+                mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
+        self.classifier = torch.nn.Sequential(*mlp_layer_list)
 
     def forward(self, x, edge_index, batch):
         x = self.gnn(x, edge_index)
@@ -116,6 +123,14 @@ class GNNWrapper(torch.nn.Module):
 
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT]}
 custom_gnns = {x.__name__: x for x in [MyGCN]}
+
+
+class MAPELoss(torch.nn.Module):
+    def __init__(self):
+        super(MAPELoss, self).__init__()
+
+    def forward(self, input, target):
+        return torch.mean(torch.abs((target - input) / target))
 
 
 # ***************************************
@@ -185,6 +200,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
             print("=======")
             print(f"Number of graphs in the current batch: {data.num_graphs}")
             print(data)
+            print(f"Average target: {torch.mean(data.y)}")
             print()
 
     return train_data_obj, test_data_obj, dataset_config, features, dataset.num_features  # type: ignore
@@ -193,7 +209,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
 # ***************************************
 # ************* FUNCTIONS ***************
 # ***************************************
-def generate_model(architecture, in_channels, hidden_channels, num_layers, **kwargs):
+def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwargs):
     """Generate a Neural Network model based on the architecture and hyperparameters."""
     # GLOBALS: device, premade_gnns, custom_gnns
     if architecture in premade_gnns:
@@ -201,12 +217,12 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, **kwa
             gnn_model=premade_gnns[architecture],
             in_channels=in_channels,
             hidden_channels=hidden_channels,
-            num_layers=num_layers,
+            gnn_layers=gnn_layers,
             **kwargs,
         )
     else:
         MyGNN = custom_gnns[architecture]
-        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * num_layers)
+        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * gnn_layers)
     model = model.to(device)
     return model
 
@@ -437,7 +453,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["betweenness_ablation"]
+    tags = ["meaningless_features"]
     if is_best_run:
         tags.append("BEST")
 
@@ -449,8 +465,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         6: -1,
         7: -1,
         8: -1,
-        # 9:  100000,
-        # 10: 100000
+        # 9:  10000,
+        # 10: 10000
     }
 
     # Set up the run
@@ -474,7 +490,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         config["architecture"],
         feature_dim,
         config["hidden_channels"],
-        config["num_layers"],
+        config["gnn_layers"],
+        mlp_layers=config.get("mlp_layers", 1),
         act=config["activation"],
         dropout=float(config["dropout"]),
         pool=config["aggr"],
@@ -562,13 +579,15 @@ if __name__ == "__main__":
         global_config = {
             "architecture": "GraphSAGE",
             "hidden_channels": 32,
-            "num_layers": 5,
+            "gnn_layers": 5,
+            "mlp_layers": 2,
             "activation": "tanh",
             "dropout": 0.0,
-            "aggr": "max",
+            "aggr": "add",
             "optimizer": "adam",
             "learning_rate": 0.01,
             "epochs": 2000,
+            # "selected_features": ["random1"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()

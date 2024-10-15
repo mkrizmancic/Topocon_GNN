@@ -11,6 +11,9 @@
             "program": "/home/marko/PROJECTS/Topocon_GNN/gnn_fiedler_approx/algebraic_connectivity_script.py",
             "console": "integratedTerminal",
             "justMyCode": false,
+            // "env": {
+            //     "LINE_PROFILE": "0"
+            // },
             "args": [
                 "--standalone",
                 "--eval-type", "basic",

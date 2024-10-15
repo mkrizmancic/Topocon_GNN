@@ -98,6 +98,10 @@ class ConnectivityDataset(InMemoryDataset):
         return ohd
 
     feature_functions = {
+        # "zero": lambda x: dict.fromkeys(x.nodes(), 0),
+        # "one": lambda x: dict.fromkeys(x.nodes(), 1),
+        # "random1": lambda x: {n: np.random.uniform() for n in x.nodes()},
+        # "random2": lambda x: {n: np.random.uniform() for n in x.nodes()},
         "degree": lambda x: x.degree,
         "degree_centrality": nx.degree_centrality,
         "core_number": nx.core_number,

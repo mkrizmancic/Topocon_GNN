@@ -2,7 +2,7 @@
 
 source /home/marko/PROJECTS/graphs_venv/bin/activate
 
-CONFIG_FILE="config/betweenness_ablation.yaml"
+CONFIG_FILE="config/experimenting_sweep.yaml"
 PROJECT="gnn_fiedler_approx_v2"
 
 # Create the sweep and extract the sweep ID
