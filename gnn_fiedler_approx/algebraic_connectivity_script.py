@@ -206,8 +206,8 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     train_batch = next(iter(train_loader))
     test_batch = next(iter(test_loader))
 
-    train_data_obj = train_batch if dataset_config["batch_size"] == 0 else train_loader
-    test_data_obj = test_batch if dataset_config["batch_size"] == 0 else test_loader
+    train_data_obj = train_batch if batch_size == train_size else train_loader
+    test_data_obj = test_batch if batch_size == train_size else test_loader
 
     if not suppress_output:
         print()
