@@ -90,3 +90,7 @@ def add_feature_visualization(pos, data, features):
             go.Bar(x=features, y=data[i], orientation='h')
         )
     return bar_charts
+
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)

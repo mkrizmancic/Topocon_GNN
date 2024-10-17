@@ -1,41 +1,39 @@
 program: algebraic_connectivity_script.py
-name: dumb_baselines
+name: jumping_knowledge
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
   name: test_loss
 parameters:
   architecture:
-    values: [GraphSAGE, MLP]
+    values: [GCN, GIN, GraphSAGE]
   hidden_channels:
     values: [32]
   gnn_layers:
     values: [5]
+  mlp_layers:
+    value: 1
   dropout:
-    values: [0.0]
+    value: 0.0
   activation:
-    values: [tanh]
-  aggr:
-    values: [add]
+    values: [relu, tanh]
+  pool:
+    values: [add, max]
   optimizer:
     value: adam
   learning_rate:
     values: [0.01]
   epochs:
-    value: 1000
-  selected_features:
-    values:
-      - [zero]
-      - [ones]
-      - [random1]
-      - [random1, random2]
+    value: 2000
+  jk:
+    values: [null, "last", "cat", "max"]
 
 command:
   - ${env}
   - ${interpreter}
   - ${program}
   - "--eval-type"
-  - "detailed"
+  - "basic"
   - "--eval-target"
   - "best"
 

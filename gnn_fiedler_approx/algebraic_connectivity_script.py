@@ -18,20 +18,27 @@ from algebraic_connectivity_dataset import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import (MLP, GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential,
-                                global_mean_pool, global_max_pool, global_add_pool)
-from utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple
+from torch_geometric.nn import (
+    MLP,
+    GAT,
+    GCN,
+    GIN,
+    GCNConv,
+    GraphSAGE,
+    Sequential,
+    global_mean_pool,
+    global_max_pool,
+    global_add_pool,
+)
+from utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters
 
 
-GLOBAL_POOLINGS = {
-    "mean": global_mean_pool,
-    "max": global_max_pool,
-    "add": global_add_pool
-}
+GLOBAL_POOLINGS = {"mean": global_mean_pool, "max": global_max_pool, "add": global_add_pool}
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parent / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_PATH /= "best_model.pth"
+
 
 class EvalType(enum.Enum):
     NONE = 0
@@ -39,13 +46,16 @@ class EvalType(enum.Enum):
     DETAILED = 2
     FULL = 3
 
+
 class EvalTarget(enum.Enum):
     LAST = "last"
     BEST = "best"
 
+
 # ***************************************
 # *************** MODELS ****************
 # ***************************************
+# FIXME: Activation function is missing
 class MyGCN(torch.nn.Module):
     def __init__(self, input_channels, mp_layers):
         super(MyGCN, self).__init__()
@@ -77,13 +87,20 @@ class MyGCN(torch.nn.Module):
 
 
 class GNNWrapper(torch.nn.Module):
-    def __init__(self, gnn_model, in_channels: int, hidden_channels: int, gnn_layers: int, mlp_layers: int=1, pool="mean", **kwargs):
+    def __init__(
+        self,
+        gnn_model,
+        in_channels: int,
+        hidden_channels: int,
+        gnn_layers: int,
+        mlp_layers: int = 1,
+        pool="mean",
+        **kwargs,
+    ):
         super().__init__()
-        self.gnn = gnn_model(in_channels=in_channels,
-                             hidden_channels=hidden_channels,
-                             out_channels=hidden_channels,
-                             num_layers=gnn_layers,
-                             **kwargs)
+        self.gnn = gnn_model(
+            in_channels=in_channels, hidden_channels=hidden_channels, out_channels=None, num_layers=gnn_layers, **kwargs
+        )
         self.pool = GLOBAL_POOLINGS[pool]
         # self.classifier = torch.nn.Linear(hidden_channels, 1)
         mlp_layer_list = []
@@ -114,11 +131,11 @@ class GNNWrapper(torch.nn.Module):
         else:
             name.append(f"D{self.gnn.dropout[0]:.2f}")
         name.append(f"{self.pool.__name__}")
+        name.append(f"{count_parameters(self)}")
 
         name = "-".join(name)
 
         return name
-
 
 
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT]}
@@ -136,7 +153,7 @@ class MAPELoss(torch.nn.Module):
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
-def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_size=0, seed=42, suppress_output=False):
+def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_size=1.0, seed=42, suppress_output=False):
     dataset_config = {
         "name": "ConnectivityDataset",
         "selected_graphs": str(selected_graph_sizes),
@@ -174,14 +191,14 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
         test_dataset = train_dataset
 
     if not suppress_output:
-        train_counter = Counter([data.x.shape[0] for data in train_dataset]) # type: ignore
-        test_counter = Counter([data.x.shape[0] for data in test_dataset]) # type: ignore
+        train_counter = Counter([data.x.shape[0] for data in train_dataset])  # type: ignore
+        test_counter = Counter([data.x.shape[0] for data in test_dataset])  # type: ignore
         print()
         print(f"Training dataset: {train_counter} ({train_counter.total()})")
         print(f"Testing dataset : {test_counter} ({test_counter.total()})")
 
     # Batch and load data.
-    batch_size = dataset_config["batch_size"] if dataset_config["batch_size"] > 0 else len(train_dataset)
+    batch_size = int(np.ceil(dataset_config["batch_size"] * len(train_dataset)))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
@@ -453,7 +470,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["meaningless_features"]
+    tags = ["jumping_knowledge"]
     if is_best_run:
         tags.append("BEST")
 
@@ -478,7 +495,10 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Load the dataset.
     train_data_obj, test_data_obj, dataset_config, features, feature_dim = load_dataset(
-        selected_graph_sizes, selected_features=config.get("selected_features", []), suppress_output=is_sweep
+        selected_graph_sizes,
+        selected_features=config.get("selected_features", []),
+        batch_size=1.0,
+        suppress_output=is_sweep
     )
 
     wandb.config["dataset"] = dataset_config
@@ -491,10 +511,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         feature_dim,
         config["hidden_channels"],
         config["gnn_layers"],
-        mlp_layers=config.get("mlp_layers", 1),
+        mlp_layers=config["mlp_layers"],
         act=config["activation"],
         dropout=float(config["dropout"]),
-        pool=config["aggr"],
+        pool=config["pool"],
+        jk=config["jk"],
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()
@@ -504,9 +525,14 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Run training.
     train_results = train(
-        model, optimizer, criterion, train_data_obj, test_data_obj, config["epochs"],
+        model,
+        optimizer,
+        criterion,
+        train_data_obj,
+        test_data_obj,
+        config["epochs"],
         suppress_output=is_sweep,
-        save_best=save_best
+        save_best=save_best,
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
     run.summary["best_test_loss"] = min(train_results["test_losses"])
@@ -526,9 +552,13 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.summary["good_within"] = eval_results["good_within"]
-        run.log({"abs_err_hist": eval_results["fig_abs_err"],
-                 "rel_err_hist": eval_results["fig_rel_err"],
-                 "err_curve": eval_results["fig_err_curve"]})
+        run.log(
+            {
+                "abs_err_hist": eval_results["fig_abs_err"],
+                "rel_err_hist": eval_results["fig_rel_err"],
+                "err_curve": eval_results["fig_err_curve"],
+            }
+        )
 
         if eval_type.value > EvalType.BASIC.value:
             run.log({"results_table": eval_results["table"]})
@@ -536,7 +566,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         if is_best_run:
             # Name the model with the current time and date to make it uniq
             model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y%H%M')}"
-            artifact = wandb.Artifact(name=model_name, type='model')
+            artifact = wandb.Artifact(name=model_name, type="model")
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)
 
@@ -557,11 +587,16 @@ if __name__ == "__main__":
     # - basic: Will calculate all metrics and plot the graphs, but will not upload the results table to W&B.
     # - detailed: Same as basic, but will also upload the results table to W&B.
     # - full: Same as detailed, but will also plot the graphs inside the results table.
-    args.add_argument("--eval-type", action="store", choices=["basic", "detailed", "full", "none"],
-                      help="Level of detail for model evaluation.")
+    args.add_argument(
+        "--eval-type",
+        action="store",
+        choices=["basic", "detailed", "full", "none"],
+        help="Level of detail for model evaluation.",
+    )
     # Evaluate the model from the last epoch or the best.
-    args.add_argument("--eval-target", action="store", choices=["best", "last"], default="last",
-                      help="Which model to evaluate.")
+    args.add_argument(
+        "--eval-target", action="store", choices=["best", "last"], default="last", help="Which model to evaluate."
+    )
     args.add_argument("--no-wandb", action="store_true", help="Do not use W&B for logging.")
     # If best is set, the script will evaluate the best model, add the BEST tag, plot the graphs inside the results
     # table and upload everything to W&B.
@@ -577,16 +612,20 @@ if __name__ == "__main__":
 
     if args.standalone:
         global_config = {
+            ## Model configuration
             "architecture": "GraphSAGE",
             "hidden_channels": 32,
             "gnn_layers": 5,
-            "mlp_layers": 2,
+            "mlp_layers": 1,
             "activation": "tanh",
+            "pool": "max",
+            "jk": None,
             "dropout": 0.0,
-            "aggr": "add",
+            ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
             "epochs": 2000,
+            ## Dataset configuration
             # "selected_features": ["random1"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
