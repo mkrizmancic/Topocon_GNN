@@ -1,12 +1,12 @@
 program: algebraic_connectivity_script.py
-name: jumping_knowledge
+name: graphsage
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
   name: test_loss
 parameters:
   architecture:
-    values: [GCN, GIN, GraphSAGE]
+    values: [GraphSAGE]
   hidden_channels:
     values: [32]
   gnn_layers:
@@ -16,9 +16,9 @@ parameters:
   dropout:
     value: 0.0
   activation:
-    values: [relu, tanh]
+    values: [tanh]
   pool:
-    values: [add, max]
+    values: [max]
   optimizer:
     value: adam
   learning_rate:
@@ -26,7 +26,16 @@ parameters:
   epochs:
     value: 2000
   jk:
-    values: [null, "last", "cat", "max"]
+    values: ["none"]
+  model_kwargs:
+    parameters:
+      aggr:
+        values: ["mean", "max", "lstm"]
+      project:
+        values: [True, False]
+      root_weight:
+        values: [True, False]
+
 
 command:
   - ${env}

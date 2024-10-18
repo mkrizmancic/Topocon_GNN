@@ -2,6 +2,7 @@ import os
 import pathlib
 
 import torch
+import torch_geometric.utils
 from algebraic_connectivity_dataset import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
 from torch_geometric.loader import DataLoader
@@ -61,7 +62,6 @@ class GNNWrapper(torch.nn.Module):
                              hidden_channels=hidden_channels,
                              out_channels=hidden_channels,
                              num_layers=gnn_layers,
-                             jk="lstm",
                              **kwargs)
         self.pool = GLOBAL_POOLINGS[pool]
         # self.classifier = torch.nn.Linear(hidden_channels, 1)
@@ -155,13 +155,17 @@ def main():
         "GraphSAGE",
         in_channels=dataset.num_features,
         hidden_channels=32,
-        gnn_layers=5,
+        gnn_layers=2,
         mlp_layers=1,
         act="relu",
         dropout=0.0,
-        pool="mean"
+        pool="mean",
+        aggr="lstm",
+        project=True
     )
 
+    # sorted_edge_index = torch_geometric.utils.sort_edge_index(data.edge_index, sort_by_row=False)
+    # data = data.sort(sort_by_row=False)
     print(summary(model, data.x, data.edge_index, batch=data.batch, max_depth=10, leaf_module=None))
     print(f"Number of parameters: {count_parameters(model)}")
 

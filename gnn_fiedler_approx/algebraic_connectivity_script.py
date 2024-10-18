@@ -315,6 +315,7 @@ def train(
     train_losses = np.zeros(num_epochs)
     test_losses = np.zeros(num_epochs)
     best_loss = float("inf")
+    test_loss = 0
 
     # Start the training loop with timer.
     training_timer = codetiming.Timer(logger=None)
@@ -470,7 +471,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["jumping_knowledge"]
+    tags = ["GraphSAGE"]
     if is_best_run:
         tags.append("BEST")
 
@@ -497,13 +498,17 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     train_data_obj, test_data_obj, dataset_config, features, feature_dim = load_dataset(
         selected_graph_sizes,
         selected_features=config.get("selected_features", []),
-        batch_size=1.0,
+        batch_size=1,
         suppress_output=is_sweep
     )
 
     wandb.config["dataset"] = dataset_config
     if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
         wandb.config["selected_features"] = features
+
+    if config["architecture"] == "GraphSAGE" and config.get("model_kwargs", {}).get("aggr") == "lstm":
+        train_data_obj = train_data_obj.sort(sort_by_row=False)
+        test_data_obj = test_data_obj.sort(sort_by_row=False)
 
     # Set up the model, optimizer, and criterion.
     model = generate_model(
@@ -515,7 +520,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         act=config["activation"],
         dropout=float(config["dropout"]),
         pool=config["pool"],
-        jk=config["jk"],
+        jk=config["jk"] if config["jk"] != "none" else None,
+        **config["model_kwargs"],
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()
