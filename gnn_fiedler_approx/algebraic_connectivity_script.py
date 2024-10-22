@@ -182,7 +182,8 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     features = selected_features if selected_features else dataset.features
 
     # Shuffle and split the dataset.
-    torch.manual_seed(seed)
+    # TODO: Splitting after shuffle gives relatively balanced splits between the graph sizes, but it's not perfect.
+    # torch.manual_seed(seed)
     dataset = dataset.shuffle()
 
     train_size = round(dataset_config["split"] * len(dataset))
@@ -195,9 +196,14 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     if not suppress_output:
         train_counter = Counter([data.x.shape[0] for data in train_dataset])  # type: ignore
         test_counter = Counter([data.x.shape[0] for data in test_dataset])  # type: ignore
+        splits_per_size = {
+            size: round(train_counter[size] / (train_counter[size] + test_counter[size]), 2)
+            for size in set(train_counter + test_counter)
+        }
         print()
         print(f"Training dataset: {train_counter} ({train_counter.total()})")
         print(f"Testing dataset : {test_counter} ({test_counter.total()})")
+        print(f"Dataset splits  : {splits_per_size}")
 
     # Batch and load data.
     batch_size = int(np.ceil(dataset_config["batch_size"] * len(train_dataset)))
@@ -258,7 +264,7 @@ def training_pass(model, batch, optimizer, criterion):
     """Perofrm a single training pass over the batch."""
     if SORT_DATA:
         batch = batch.sort(sort_by_row=False)
-    
+
     data = batch.to(device)  # Move to CUDA if available.
     out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
     loss = criterion(out.squeeze(), data.y)  # Compute the loss.
@@ -272,7 +278,7 @@ def testing_pass(model, batch, criterion):
     """Perform a single testing pass over the batch."""
     if SORT_DATA:
         batch = batch.sort(sort_by_row=False)
-            
+
     with torch.no_grad():
         data = batch.to(device)
         out = model(data.x, data.edge_index, batch=data.batch)
@@ -372,7 +378,7 @@ def plot_training_curves(num_epochs, train_losses, test_losses, criterion):
 def eval_batch(model, batch, plot_graphs=False):
     if SORT_DATA:
         batch = batch.sort(sort_by_row=False)
-    
+
     # Make predictions.
     data = batch.to(device)
     out = model(data.x, data.edge_index, data.batch)
@@ -505,6 +511,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_sweep:
         print(f"Running sweep with config: {config}...")
 
+    # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
     if config["model_kwargs"]["aggr"] == "lstm" and config["model_kwargs"]["project"] == True:
         bs = 0.5
     else:
@@ -515,6 +522,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         selected_graph_sizes,
         selected_features=config.get("selected_features", []),
         batch_size=bs,
+        split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=is_sweep
     )
 
@@ -533,7 +541,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         dropout=float(config["dropout"]),
         pool=config["pool"],
         jk=config["jk"] if config["jk"] != "none" else None,
-        **config["model_kwargs"],
+        **config.get("model_kwargs", {}),
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()

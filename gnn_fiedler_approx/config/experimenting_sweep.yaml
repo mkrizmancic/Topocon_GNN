@@ -1,6 +1,6 @@
 program: algebraic_connectivity_script.py
-name: graphsage
-method: grid  # Bayesian works for small number of continuous parameters.
+name: dataset_splits
+method: random  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
   name: test_loss
@@ -12,13 +12,13 @@ parameters:
   gnn_layers:
     values: [5]
   mlp_layers:
-    value: 1
+    value: 2
   dropout:
     value: 0.0
   activation:
-    values: [tanh]
+    values: [tanh, relu]
   pool:
-    values: [max]
+    values: [max, add]
   optimizer:
     value: adam
   learning_rate:
@@ -26,15 +26,11 @@ parameters:
   epochs:
     value: 1000
   jk:
-    values: ["none"]
-  model_kwargs:
+    values: ["cat"]
+  dataset:
     parameters:
-      aggr:
-        values: ["lstm", "mean", "max"]
-      project:
-        values: [True, False]
-      root_weight:
-        values: [True, False]
+      split:
+        values: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
 
 command:
