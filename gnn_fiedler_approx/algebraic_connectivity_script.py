@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
-import torchexplorer
+# import torchexplorer
 import wandb
 from algebraic_connectivity_dataset import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
@@ -38,6 +38,8 @@ GLOBAL_POOLINGS = {"mean": global_mean_pool, "max": global_max_pool, "add": glob
 BEST_MODEL_PATH = pathlib.Path(__file__).parent / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_PATH /= "best_model.pth"
+
+SORT_DATA = True
 
 
 class EvalType(enum.Enum):
@@ -254,6 +256,9 @@ def generate_optimizer(model, optimizer, lr, **kwargs):
 
 def training_pass(model, batch, optimizer, criterion):
     """Perofrm a single training pass over the batch."""
+    if SORT_DATA:
+        batch = batch.sort(sort_by_row=False)
+    
     data = batch.to(device)  # Move to CUDA if available.
     out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
     loss = criterion(out.squeeze(), data.y)  # Compute the loss.
@@ -265,6 +270,9 @@ def training_pass(model, batch, optimizer, criterion):
 
 def testing_pass(model, batch, criterion):
     """Perform a single testing pass over the batch."""
+    if SORT_DATA:
+        batch = batch.sort(sort_by_row=False)
+            
     with torch.no_grad():
         data = batch.to(device)
         out = model(data.x, data.edge_index, batch=data.batch)
@@ -362,6 +370,9 @@ def plot_training_curves(num_epochs, train_losses, test_losses, criterion):
 
 
 def eval_batch(model, batch, plot_graphs=False):
+    if SORT_DATA:
+        batch = batch.sort(sort_by_row=False)
+    
     # Make predictions.
     data = batch.to(device)
     out = model(data.x, data.edge_index, data.batch)
@@ -488,27 +499,28 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     }
 
     # Set up the run
-    torchexplorer.setup()
+    # torchexplorer.setup()
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
 
+    if config["model_kwargs"]["aggr"] == "lstm" and config["model_kwargs"]["project"] == True:
+        bs = 0.5
+    else:
+        bs = 1.0
+
     # Load the dataset.
     train_data_obj, test_data_obj, dataset_config, features, feature_dim = load_dataset(
         selected_graph_sizes,
         selected_features=config.get("selected_features", []),
-        batch_size=1,
+        batch_size=bs,
         suppress_output=is_sweep
     )
 
     wandb.config["dataset"] = dataset_config
     if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
         wandb.config["selected_features"] = features
-
-    if config["architecture"] == "GraphSAGE" and config.get("model_kwargs", {}).get("aggr") == "lstm":
-        train_data_obj = train_data_obj.sort(sort_by_row=False)
-        test_data_obj = test_data_obj.sort(sort_by_row=False)
 
     # Set up the model, optimizer, and criterion.
     model = generate_model(
