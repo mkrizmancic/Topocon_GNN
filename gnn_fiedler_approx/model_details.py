@@ -103,9 +103,6 @@ premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT]}
 custom_gnns = {x.__name__: x for x in [MyGCN]}
 
 
-# ***************************************
-# ************* FUNCTIONS ***************
-# ***************************************
 def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwargs):
     """Generate a Neural Network model based on the architecture and hyperparameters."""
     # GLOBALS: device, premade_gnns, custom_gnns

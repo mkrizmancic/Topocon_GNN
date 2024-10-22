@@ -512,7 +512,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         print(f"Running sweep with config: {config}...")
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    if config["model_kwargs"]["aggr"] == "lstm" and config["model_kwargs"]["project"] == True:
+    if config["model_kwargs"]["aggr"] == "lstm" and config["model_kwargs"]["project"]:
         bs = 0.5
     else:
         bs = 1.0
