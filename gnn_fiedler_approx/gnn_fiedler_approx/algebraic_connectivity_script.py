@@ -30,10 +30,30 @@ from torch_geometric.nn import (
     global_max_pool,
     global_add_pool,
 )
+from torch_geometric.nn.aggr import (
+    MedianAggregation,
+    VarAggregation,
+    StdAggregation,
+    SoftmaxAggregation,
+    PowerMeanAggregation,
+    MLPAggregation,
+    SortAggregation,
+)
 from gnn_utils.utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters
 
 
-GLOBAL_POOLINGS = {"mean": global_mean_pool, "max": global_max_pool, "add": global_add_pool}
+GLOBAL_POOLINGS = {
+    "mean": global_mean_pool,
+    "max": global_max_pool,
+    "add": global_add_pool,
+    "median": MedianAggregation(),
+    "var": VarAggregation(),
+    "std": StdAggregation(),
+    "softmax": SoftmaxAggregation(learn=True),
+    # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
+    # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
+    # "sort": SortAggregation,  # Requires sorting node representations
+}
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
@@ -643,15 +663,15 @@ if __name__ == "__main__":
             "architecture": "GraphSAGE",
             "hidden_channels": 32,
             "gnn_layers": 5,
-            "mlp_layers": 1,
+            "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "max",
-            "jk": None,
+            "pool": "powermean",
+            "jk": "cat",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 2000,
+            "epochs": 100,
             ## Dataset configuration
             # "selected_features": ["random1"]
         }
