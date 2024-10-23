@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 import random
 from pathlib import Path
 
@@ -20,6 +23,7 @@ class ConnectivityDataset(InMemoryDataset):
             loader = GraphDataset()
         self.loader = loader
 
+        # Calls InMemoryDataset.__init__ -> calls Dataset.__init__  -> calls Dataset._process -> calls self.process
         super().__init__(root, transform, pre_transform, pre_filter)
 
         self.load(self.processed_paths[0])
@@ -57,12 +61,11 @@ class ConnectivityDataset(InMemoryDataset):
         That means that if you want to reprocess the data, you need to delete
         the processed files and reimport the dataset.
         """
-        # TODO: Automatically detect changes in the dataset.
-        #       We could come up with a namig scheme that will differentiate
-        #       which graph families (and/or sizes) and features were used to
-        #       generate the dataset. This way, we could detect changes and
-        #       reprocess the dataset when needed.
-        return ["data.pt"]
+        dataset_props = json.dumps([self.loader.selection, self.features])
+        sha256_hash = hashlib.sha256(dataset_props.encode("utf-8")).digest()
+        hash_string = base64.urlsafe_b64encode(sha256_hash).decode("utf-8")[:10]
+
+        return [f"data_{hash_string}.pt"]
 
     def download(self):
         """Automatically download raw files if missing."""
