@@ -8,7 +8,7 @@
             "name": "Python Debugger: Current File with Arguments",
             "type": "debugpy",
             "request": "launch",
-            "program": "/home/marko/PROJECTS/Topocon_GNN/gnn_fiedler_approx/algebraic_connectivity_script.py",
+            "program": "/home/marko/PROJECTS/Topocon_GNN/gnn_fiedler_approx/gnn_fiedler_approx/algebraic_connectivity_script.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             // "env": {

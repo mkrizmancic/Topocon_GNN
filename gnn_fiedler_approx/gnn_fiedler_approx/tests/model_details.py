@@ -3,7 +3,7 @@ import pathlib
 
 import torch
 import torch_geometric.utils
-from algebraic_connectivity_dataset import ConnectivityDataset
+from gnn_fiedler_approx import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import (MLP, GAT, GCN, GIN, GCNConv, GraphSAGE, Sequential,

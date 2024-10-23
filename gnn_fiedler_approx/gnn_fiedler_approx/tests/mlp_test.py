@@ -2,7 +2,7 @@ import os
 import pathlib
 
 import torch
-from algebraic_connectivity_dataset import ConnectivityDataset
+from gnn_fiedler_approx import ConnectivityDataset
 from my_graphs_dataset import GraphDataset
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import (MLP, global_add_pool, summary)
@@ -96,11 +96,39 @@ def main():
     #   approximation theorem.
 
     embedding_orig = embedding_model_orig(data.x, data.edge_index, data.batch).detach()
-    embedding_my = embedding_model_my(data.x, data.edge_index, data.batch)
+    embedding_my = embedding_model_my(data.x, data.edge_index, data.batch).detach()
 
     neurons = 256
     downstream_model = torch.nn.Sequential(
         torch.nn.Linear(10, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
+        torch.nn.Tanh(),
+        torch.nn.Linear(neurons, neurons),
         torch.nn.Tanh(),
         torch.nn.Linear(neurons, neurons),
         torch.nn.Tanh(),
@@ -125,8 +153,16 @@ def main():
         if epoch % 10 == 0:
             print(
                 f"Epoch: {epoch:03d}, "
-                f"Train Loss: {loss.item():.4f}, "
+                f"Train Loss: {loss.item():.6f}, "
             )
+        if loss.item() < 0.0001:
+            break
+
+    downstream_model.eval()
+    out = downstream_model(embedding_orig)
+    criterion = torch.nn.L1Loss()
+    loss = criterion(out.squeeze(), data.y)
+    print(f"Final loss: {loss.item():.4f}")
 
     # Loss does not go below 0.15, which is much worse than what we have now.
     #   I guess that just because we have (more or less) unique embeddings and MLP follows the universal approximation

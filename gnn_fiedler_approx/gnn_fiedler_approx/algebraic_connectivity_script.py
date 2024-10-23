@@ -30,12 +30,12 @@ from torch_geometric.nn import (
     global_max_pool,
     global_add_pool,
 )
-from utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters
+from gnn_utils.utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters
 
 
 GLOBAL_POOLINGS = {"mean": global_mean_pool, "max": global_max_pool, "add": global_add_pool}
 
-BEST_MODEL_PATH = pathlib.Path(__file__).parent / "models"
+BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_PATH /= "best_model.pth"
 
@@ -512,7 +512,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         print(f"Running sweep with config: {config}...")
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    if config["model_kwargs"]["aggr"] == "lstm" and config["model_kwargs"]["project"]:
+    model_kwargs = config.get("model_kwargs", {})
+    if model_kwargs and model_kwargs["aggr"] == "lstm" and model_kwargs["project"]:
         bs = 0.5
     else:
         bs = 1.0
@@ -523,7 +524,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         selected_features=config.get("selected_features", []),
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
-        suppress_output=is_sweep
+        suppress_output=is_sweep,
     )
 
     wandb.config["dataset"] = dataset_config
@@ -541,7 +542,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         dropout=float(config["dropout"]),
         pool=config["pool"],
         jk=config["jk"] if config["jk"] != "none" else None,
-        **config.get("model_kwargs", {}),
+        **model_kwargs,
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()

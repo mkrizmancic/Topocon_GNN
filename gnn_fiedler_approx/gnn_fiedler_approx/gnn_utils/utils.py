@@ -4,7 +4,7 @@ import networkx as nx
 import plotly.graph_objects as go
 import torch_geometric.utils as pygUtils
 import wandb
-from visualize import GraphVisualization
+from .visualize import GraphVisualization
 
 
 def extract_graphs_from_batch(data):

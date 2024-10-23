@@ -103,12 +103,12 @@ class ConnectivityDataset(InMemoryDataset):
         # "random1": lambda g: {n: np.random.uniform() for n in g.nodes()},
         # "random2": lambda g: {n: np.random.uniform() for n in g.nodes()},
         "degree": lambda g: {n: float(g.degree(n)) for n in g.nodes()},
-        # "degree_centrality": nx.degree_centrality,
+        "degree_centrality": nx.degree_centrality,
         # "core_number": nx.core_number,
         # "triangles": nx.triangles,
         # "clustering": nx.clustering,
         # "close_centrality": nx.closeness_centrality,
-        # "betweenness_centrality": nx.betweenness_centrality,
+        "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
     }
 
@@ -164,7 +164,7 @@ def inspect_dataset(dataset, num_graphs=1):
 
 
 def main():
-    root = Path(__file__).parent / "Dataset"
+    root = Path(__file__).parents[1] / "Dataset"
     selected_graph_sizes = {
         3: -1,
         4: -1,
