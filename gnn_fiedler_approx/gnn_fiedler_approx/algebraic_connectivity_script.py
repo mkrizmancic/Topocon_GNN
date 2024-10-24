@@ -23,9 +23,7 @@ from torch_geometric.nn import (
     GAT,
     GCN,
     GIN,
-    GCNConv,
     GraphSAGE,
-    Sequential,
     global_mean_pool,
     global_max_pool,
     global_add_pool,
@@ -39,7 +37,9 @@ from torch_geometric.nn.aggr import (
     MLPAggregation,
     SortAggregation,
 )
+
 from gnn_utils.utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters
+from custom_models import MyGCN
 
 
 GLOBAL_POOLINGS = {
@@ -77,37 +77,6 @@ class EvalTarget(enum.Enum):
 # ***************************************
 # *************** MODELS ****************
 # ***************************************
-# FIXME: Activation function is missing
-class MyGCN(torch.nn.Module):
-    def __init__(self, input_channels, mp_layers):
-        super(MyGCN, self).__init__()
-
-        # Message-passing layers - GCNConv
-        layers = []
-        for i, layer_size in enumerate(mp_layers):
-            if i == 0:
-                layers.append((GCNConv(input_channels, layer_size), "x, edge_index -> x"))
-            else:
-                layers.append((GCNConv(mp_layers[i - 1], layer_size), "x, edge_index -> x"))
-            layers.append(torch.nn.ReLU())
-        self.mp_layers = Sequential("x, edge_index", layers)
-
-        # Final readout layer
-        self.lin = torch.nn.Linear(mp_layers[-1], 1)
-
-    def forward(self, x, edge_index, batch):
-        # 1. Obtain node embeddings
-        x = self.mp_layers(x, edge_index)
-
-        # 2. Readout layer
-        x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
-
-        # 3. Apply a final classifier
-        x = self.lin(x)
-
-        return x
-
-
 class GNNWrapper(torch.nn.Module):
     def __init__(
         self,
@@ -133,6 +102,7 @@ class GNNWrapper(torch.nn.Module):
             else:
                 mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
         self.classifier = torch.nn.Sequential(*mlp_layer_list)
+        self.mlp_layers = mlp_layers
 
     def forward(self, x, edge_index, batch):
         x = self.gnn(x, edge_index)
@@ -142,22 +112,34 @@ class GNNWrapper(torch.nn.Module):
 
     @property
     def descriptive_name(self):
-        name = [f"{self.gnn.__class__.__name__}"]
-        if hasattr(self.gnn, "channel_list"):
-            name.append(f"{self.gnn.num_layers}x{self.gnn.channel_list[-1]}")
-        else:
-            name.append(f"{self.gnn.num_layers}x{self.gnn.hidden_channels}")
-        name.append(f"{self.gnn.act.__class__.__name__}")
-        if isinstance(self.gnn.dropout, torch.nn.Dropout):
-            name.append(f"D{self.gnn.dropout.p:.2f}")
-        else:
-            name.append(f"D{self.gnn.dropout[0]:.2f}")
-        name.append(f"{self.pool.__name__}")
-        name.append(f"{count_parameters(self)}")
+        try:
+            # Base name of the used GNN
+            name = [f"{self.gnn.__class__.__name__}"]
+            # Number of layers and size of hidden channel or hidden channels list
+            if hasattr(self.gnn, "channel_list"):
+                name.append(f"{self.gnn.num_layers}x{self.gnn.channel_list[-1]}_{self.mlp_layers}")
+            else:
+                name.append(f"{self.gnn.num_layers}x{self.gnn.hidden_channels}_{self.mlp_layers}")
+            # Activation function
+            name.append(f"{self.gnn.act.__class__.__name__}")
+            # Dropout
+            if isinstance(self.gnn.dropout, torch.nn.Dropout):
+                name.append(f"D{self.gnn.dropout.p:.2f}")
+            else:
+                name.append(f"D{self.gnn.dropout[0]:.2f}")
+            # Pooling layer: either a function or a class
+            if hasattr(self.pool, "__name__"):
+                name.append(f"{self.pool.__name__}")
+            else:
+                name.append(f"{self.pool.__class__.__name__}")
+            # Number of parameters
+            name.append(f"{count_parameters(self)}")
+            # Join all parts and return.
+            name = "-".join(name)
+            return name
 
-        name = "-".join(name)
-
-        return name
+        except Exception as e:
+            raise ValueError(f"Error in descriptive_name: {e}")
 
 
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT]}
@@ -203,7 +185,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
 
     # Shuffle and split the dataset.
     # TODO: Splitting after shuffle gives relatively balanced splits between the graph sizes, but it's not perfect.
-    # torch.manual_seed(seed)
+    torch.manual_seed(seed)
     dataset = dataset.shuffle()
 
     train_size = round(dataset_config["split"] * len(dataset))
