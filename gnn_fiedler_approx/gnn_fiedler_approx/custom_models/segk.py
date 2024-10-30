@@ -35,14 +35,6 @@ from torch_geometric.datasets import KarateClub
 from torch_geometric.utils import to_networkx
 
 
-def write_to_file(path, nodes, embeddings, delimiter=' '):
-    with open(path, 'w') as f:
-        writer = csv.writer(f, delimiter=delimiter)
-        for i,node in enumerate(nodes):
-            lst = [node]
-            lst.extend(embeddings[i,:].tolist())
-            writer.writerow(lst)
-
 
 def pyramid_match_kernel(Us, d=20, L=4):
     N = len(Us)
@@ -98,10 +90,14 @@ class SEGK(torch.nn.Module):
         else:
             raise ValueError("Use a valid kernel!!")
 
+        self.embeddings = None
+        self.nodes = None
+
     def forward(self, data):
         # Convert data from PyG format to NetworkX and extract nodes and edges.
         G = to_networkx(data, to_undirected=True)
         nodes = list(G.nodes)
+        self.nodes = nodes
         edgelist = list(G.edges(data=False))
         n = len(nodes)
 
@@ -169,7 +165,19 @@ class SEGK(torch.nn.Module):
         # Embedding computation for remaining nodes
         embeddings[idx[self.dim:], :] = np.dot(K, Norm.T)
 
-        return nodes, embeddings
+        # Write embeddings to the data object
+        return torch.tensor(embeddings, dtype=torch.float)
+
+    def write_to_file(self, path, delimiter=' '):
+        if self.embeddings is None or self.nodes is None:
+            raise ValueError("No embeddings to write to file.")
+
+        with open(path, 'w') as f:
+            writer = csv.writer(f, delimiter=delimiter)
+            for i,node in enumerate(self.nodes):
+                lst = [node]
+                lst.extend(self.embeddings[i,:].tolist())
+                writer.writerow(lst)
 
     @staticmethod
     def extract_egonets(edgelist, radius, node_labels=None):
@@ -226,8 +234,9 @@ def main():
     data = dataset[0]  # Get the first graph in the dataset
 
     segk = SEGK(radius=args.radius, dim=args.dim, kernel=args.kernel)
-    nodes, embeddings = segk(data)
-    write_to_file(args.path_to_output_file, nodes, embeddings)
+    data = segk(data)
+
+    segk.write_to_file(args.path_to_output_file)
 
 
 if __name__ == "__main__":
