@@ -167,7 +167,10 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     }
 
     # Load the dataset.
-    root = pathlib.Path(os.getcwd()) / "Dataset"
+    try:
+        root = pathlib.Path(__file__).parents[1] / "Dataset"  # For standalone script.
+    except NameError:
+        root = pathlib.Path(os.getcwd()).parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes)
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
 
@@ -594,7 +597,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
         if is_best_run:
             # Name the model with the current time and date to make it uniq
-            model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y%H%M')}"
+            model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y%_H%M')}"
             artifact = wandb.Artifact(name=model_name, type="model")
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)

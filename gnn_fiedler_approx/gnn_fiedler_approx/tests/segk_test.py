@@ -1,6 +1,5 @@
 import os
 import pathlib
-import select
 
 import torch
 from gnn_fiedler_approx import ConnectivityDataset
