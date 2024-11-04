@@ -26,6 +26,10 @@ class ConnectivityDataset(InMemoryDataset):
         # Calls InMemoryDataset.__init__ -> calls Dataset.__init__  -> calls Dataset._process -> calls self.process
         super().__init__(root, transform, pre_transform, pre_filter)
 
+        print("*****************************************")
+        print(f"** Creating dataset with ID {self.hash_representation} **")
+        print("*****************************************")
+
         self.load(self.processed_paths[0])
 
         if selected_features := kwargs.get("selected_features"):
@@ -61,11 +65,14 @@ class ConnectivityDataset(InMemoryDataset):
         That means that if you want to reprocess the data, you need to delete
         the processed files and reimport the dataset.
         """
-        dataset_props = json.dumps([self.loader.selection, self.features])
+        return [f"data_{self.hash_representation}.pt"]
+
+    @property
+    def hash_representation(self):
+        dataset_props = json.dumps([self.loader.selection, self.features, self.target_function(None)])
         sha256_hash = hashlib.sha256(dataset_props.encode("utf-8")).digest()
         hash_string = base64.urlsafe_b64encode(sha256_hash).decode("utf-8")[:10]
-
-        return [f"data_{hash_string}.pt"]
+        return hash_string
 
     def download(self):
         """Automatically download raw files if missing."""
@@ -115,6 +122,23 @@ class ConnectivityDataset(InMemoryDataset):
         # "one_hot_degree": one_hot_degree,
     }
 
+    # Define target in use.
+    @staticmethod
+    def algebraic_connectivity(G):
+        L = nx.laplacian_matrix(G).toarray()
+        lambdas = sorted(np.linalg.eigvalsh(L))
+        return lambdas[1]
+
+    def target_function(self, G):
+        func = self.algebraic_connectivity
+        # func = nx.node_connectivity
+        # func = nx.effective_graph_resistance
+
+        if G is None:
+            return func.__name__
+        return func(G)
+
+    # Make the data.
     def make_data(self, G):
         """Create a PyG data object from a graph object."""
         # Compute and add features to the nodes in the graph.
@@ -124,7 +148,7 @@ class ConnectivityDataset(InMemoryDataset):
                 G.nodes[node][feature] = feature_val[node]
 
         torch_G = pygUtils.from_networkx(G, group_node_attrs=self.features)
-        torch_G.y = torch.tensor(self.algebraic_connectivity(G), dtype=torch.float32)
+        torch_G.y = torch.tensor(self.target_function(G), dtype=torch.float32)
 
         return torch_G
 
@@ -139,12 +163,6 @@ class ConnectivityDataset(InMemoryDataset):
         # https://github.com/pyg-team/pytorch_geometric/discussions/7684
         assert self._data is not None
         self._data.x = self._data.x[:, mask]
-
-    @staticmethod
-    def algebraic_connectivity(G):
-        L = nx.laplacian_matrix(G).toarray()
-        lambdas = sorted(np.linalg.eigvalsh(L))
-        return lambdas[1]
 
 
 def inspect_dataset(dataset, num_graphs=1):

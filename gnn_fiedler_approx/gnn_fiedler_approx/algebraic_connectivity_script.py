@@ -3,7 +3,6 @@ from collections import Counter
 import datetime
 import enum
 import json
-import os
 import pathlib
 
 import codetiming
@@ -170,7 +169,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     try:
         root = pathlib.Path(__file__).parents[1] / "Dataset"  # For standalone script.
     except NameError:
-        root = pathlib.Path(os.getcwd()).parents[1] / "Dataset"  # For Jupyter notebook.
+        root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes)
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
 
@@ -197,6 +196,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
         test_dataset = dataset[train_size:]
     else:
         test_dataset = train_dataset
+    test_size = len(test_dataset)
 
     if not suppress_output:
         train_counter = Counter([data.x.shape[0] for data in train_dataset])  # type: ignore
@@ -213,14 +213,14 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
     # Batch and load data.
     batch_size = int(np.ceil(dataset_config["batch_size"] * len(train_dataset)))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size=min(test_size, batch_size), shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
     test_batch = next(iter(test_loader))
 
-    train_data_obj = train_batch if batch_size == train_size else train_loader
-    test_data_obj = test_batch if batch_size == train_size else test_loader
+    train_data_obj = train_batch if train_loader.batch_size == train_size else train_loader
+    test_data_obj = test_batch if test_loader.batch_size == test_size else test_loader
 
     if not suppress_output:
         print()
