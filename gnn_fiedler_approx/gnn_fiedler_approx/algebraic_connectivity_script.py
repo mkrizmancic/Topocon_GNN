@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import torch
 # import torchexplorer
 import wandb
-from algebraic_connectivity_dataset import ConnectivityDataset
+from algebraic_connectivity_dataset import ConnectivityDataset, inspect_dataset
 from my_graphs_dataset import GraphDataset
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -58,7 +58,7 @@ BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_PATH /= "best_model.pth"
 
-SORT_DATA = True
+SORT_DATA = False
 
 
 class EvalType(enum.Enum):
@@ -175,11 +175,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
 
     # General information
     if not suppress_output:
-        print()
-        print(f"Dataset: {dataset}:")
-        print("====================")
-        print(f"Number of graphs: {len(dataset)}")
-        print(f"Number of features: {dataset.num_features}")
+        inspect_dataset(dataset)
 
     # Store information about the dataset.
     dataset_config["num_graphs"] = len(dataset)
@@ -205,33 +201,37 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
             size: round(train_counter[size] / (train_counter[size] + test_counter[size]), 2)
             for size in set(train_counter + test_counter)
         }
-        print()
         print(f"Training dataset: {train_counter} ({train_counter.total()})")
         print(f"Testing dataset : {test_counter} ({test_counter.total()})")
         print(f"Dataset splits  : {splits_per_size}")
 
     # Batch and load data.
-    batch_size = int(np.ceil(dataset_config["batch_size"] * len(train_dataset)))
+    batch_size = int(np.ceil(dataset_config["batch_size"] * max(len(train_dataset), len(test_dataset))))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size=min(test_size, batch_size), shuffle=False)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
     test_batch = next(iter(test_loader))
 
-    train_data_obj = train_batch if train_loader.batch_size == train_size else train_loader
-    test_data_obj = test_batch if test_loader.batch_size == test_size else test_loader
+    train_data_obj = train_batch if train_size <= batch_size else train_loader
+    test_data_obj = test_batch if test_size <= batch_size else test_loader
 
     if not suppress_output:
         print()
         print("Batches:")
+        print("========================================")
         for step, data in enumerate(train_loader):
             print(f"Step {step + 1}:")
-            print("=======")
-            print(f"Number of graphs in the current batch: {data.num_graphs}")
+            print(f"Number of graphs in the batch: {data.num_graphs}")
             print(data)
             print(f"Average target: {torch.mean(data.y)}")
             print()
+
+            if step == 5:
+                print("The rest of batches are not displayed...")
+                break
+        print("========================================\n")
 
     return train_data_obj, test_data_obj, dataset_config, features, dataset.num_features  # type: ignore
 
@@ -353,7 +353,7 @@ def train(
 
         # Save the best model.
         if save_best and epoch >= 0.3 * num_epochs and test_loss < best_loss:
-            torch.save(model.state_dict(), BEST_MODEL_PATH)
+            torch.save({"epoch": epoch, "model_state_dict": model.state_dict()}, BEST_MODEL_PATH)
             best_loss = test_loss
 
         # Print the losses every 10 epochs.
@@ -415,13 +415,28 @@ def eval_batch(model, batch, plot_graphs=False):
     )
 
 
-def evaluate(model, test_data, plot_graphs=False, make_table=False, suppress_output=False):
-    # GLOBALS: dataset_config, train_loader, test_loader
+def baseline(train_data, test_data):
+    # Average target value on the given data
+    avg = torch.mean(train_data.y)
 
-    # Evaluate the model on the test set.
+    # Mean absolute error
+    train_mae = torch.mean(torch.abs(train_data.y - avg))
+    test_mae = torch.mean(torch.abs(test_data.y - avg))
+
+    return train_mae.item(), test_mae.item()
+
+
+def evaluate(
+    model, epoch, criterion, train_data, test_data, plot_graphs=False, make_table=False, suppress_output=False
+):
+    # Loss on the train set.
+    train_loss = do_test(model, train_data, criterion)
+    test_loss = do_test(model, test_data, criterion)
+
     model.eval()
     df = pd.DataFrame()
 
+    # Build a detailed results DataFrame.
     with torch.no_grad():
         if isinstance(test_data, DataLoader):
             for batch in test_data:
@@ -461,15 +476,20 @@ def evaluate(model, test_data, plot_graphs=False, make_table=False, suppress_out
     fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
     if not suppress_output:
+        print(f"Evaluating model at epoch {epoch}.\n")
         print(
-            f"Mean error: {err_mean:.4f}\n"
-            f"Std. dev.: {err_stddev:.4f}\n"
+            f"Train loss: {train_loss:.5f}\n"
+            f"Test loss : {test_loss:.5f}\n"
+            f"Mean error: {err_mean:.5f}\n"
+            f"Std. dev. : {err_stddev:.5f}\n\n"
             f"Error brackets: {json.dumps(good_within, indent=4)}\n"
         )
         fig_abs_err.show()
         fig_rel_err.show()
         fig_err_curve.show()
         df = df.sort_values(by="Nodes")
+        print("\nDetailed results:")
+        print("==================")
         print(df)
 
     results = {
@@ -487,10 +507,12 @@ def evaluate(model, test_data, plot_graphs=False, make_table=False, suppress_out
 def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_wandb=False, is_best_run=False):
     # GLOBALS: device
 
+    # Helper boolean flags.
     save_best = eval_target == EvalTarget.BEST
     plot_graphs = eval_type == EvalType.FULL
     make_table = eval_type.value > EvalType.BASIC.value
 
+    # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
     tags = ["GraphSAGE"]
@@ -552,10 +574,20 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = torch.nn.L1Loss()
 
+    # Print baseline results.
+    baseline_results = baseline(train_data_obj, test_data_obj)
+    print("Baseline results:")
+    print("=================")
+    print(f"Train baseline: {baseline_results[0]:.5f}")
+    print(f"Test baseline: {baseline_results[1]:.5f}")
+    print()
+
     wandb.watch(model, criterion, log="all", log_freq=100)
     # torchexplorer.watch(model, backend="wandb")
 
     # Run training.
+    print("Training...")
+    print("===========")
     train_results = train(
         model,
         optimizer,
@@ -576,11 +608,17 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Run evaluation.
     if eval_type != EvalType.NONE:
+        epoch = config["epochs"]
         if eval_target == EvalTarget.BEST:
-            model.load_state_dict(torch.load(BEST_MODEL_PATH))
-            model.eval()
+            checkpoint = torch.load(BEST_MODEL_PATH)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            epoch = checkpoint["epoch"]
 
-        eval_results = evaluate(model, test_data_obj, plot_graphs, make_table, suppress_output=is_sweep)
+        print("\nEvaluation results:")
+        print("===================")
+        eval_results = evaluate(
+            model, epoch, criterion, train_data_obj, test_data_obj, plot_graphs, make_table, suppress_output=is_sweep
+        )
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.summary["good_within"] = eval_results["good_within"]
@@ -605,9 +643,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_sweep:
         print("    ...DONE.")
         if eval_type != EvalType.NONE:
-            print(f"Mean error: {eval_results['mean_err']:.4f}")
-            print(f"Std. dev.: {eval_results['stddev_err']:.4f}")
-        print(f"Duration: {train_results['duration']:.4f} s.")
+            print(f"Mean error: {eval_results['mean_err']:.5f}")
+            print(f"Std. dev.: {eval_results['stddev_err']:.5f}")
+        print(f"Duration: {train_results['duration']:.5f} s.")
     return run
 
 
@@ -650,7 +688,7 @@ if __name__ == "__main__":
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "powermean",
+            "pool": "softmax",
             "jk": "cat",
             "dropout": 0.0,
             ## Training configuration

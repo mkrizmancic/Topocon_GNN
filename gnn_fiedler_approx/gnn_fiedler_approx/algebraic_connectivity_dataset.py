@@ -165,13 +165,30 @@ class ConnectivityDataset(InMemoryDataset):
         self._data.x = self._data.x[:, mask]
 
 
-def inspect_dataset(dataset, num_graphs=1):
+def inspect_dataset(dataset):
+    print()
+    header = f"Dataset: {dataset}"
+    print(header)
+    print("=" * len(header))
+    print(f"Number of graphs: {len(dataset)}")
+    print(f"Number of features: {dataset.num_features} ({dataset.features})")
+    print("Target: algebraic connectivity")
+    print(f"    Min: {dataset.y.min().item():.3f}")
+    print(f"    Max: {dataset.y.max().item():.3f}")
+    print(f"    Mean: {dataset.y.mean().item():.3f}")
+    print(f"    Std: {dataset.y.std().item():.3f}")
+    print("=" * len(header))
+    print()
+
+
+def inspect_graphs(dataset, num_graphs=1):
     for i in random.sample(range(len(dataset)), num_graphs):
         data = dataset[i]  # Get a random graph object
 
         print()
-        print(data)
-        print("=============================================================")
+        header = f"{i} - {data}"
+        print(header)
+        print("=" * len(header))
 
         # Gather some statistics about the first graph.
         print(f"Number of nodes: {data.num_nodes}")
@@ -181,7 +198,9 @@ def inspect_dataset(dataset, num_graphs=1):
         print(f"Has isolated nodes: {data.has_isolated_nodes()}")
         print(f"Has self-loops: {data.has_self_loops()}")
         print(f"Is undirected: {data.is_undirected()}")
-        print(f"Features: {data.x}")
+        print(f"Features:\n{data.x}")
+        print("=" * len(header))
+        print()
 
 
 def main():
@@ -201,13 +220,9 @@ def main():
     with codetiming.Timer():
         dataset = ConnectivityDataset(root, loader, selected_features=[])
 
-    print()
-    print(f"Dataset: {dataset}:")
-    print("====================")
-    print(f"Number of graphs: {len(dataset)}")
-    print(f"Number of features: {dataset.num_features}")
 
-    inspect_dataset(dataset, num_graphs=1)
+    inspect_dataset(dataset)
+    inspect_graphs(dataset, num_graphs=1)
 
 
 if __name__ == "__main__":
