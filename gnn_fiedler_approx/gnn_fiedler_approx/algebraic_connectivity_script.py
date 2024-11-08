@@ -14,7 +14,7 @@ import torch
 # import torchexplorer
 import wandb
 from algebraic_connectivity_dataset import ConnectivityDataset, inspect_dataset
-from my_graphs_dataset import GraphDataset
+from my_graphs_dataset import GraphDataset, GraphType
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import (
@@ -170,7 +170,7 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
         root = pathlib.Path(__file__).parents[1] / "Dataset"  # For standalone script.
     except NameError:
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
-    graphs_loader = GraphDataset(selection=selected_graph_sizes)
+    graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
 
     # General information

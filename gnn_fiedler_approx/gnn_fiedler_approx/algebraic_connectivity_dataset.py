@@ -69,7 +69,7 @@ class ConnectivityDataset(InMemoryDataset):
 
     @property
     def hash_representation(self):
-        dataset_props = json.dumps([self.loader.selection, self.features, self.target_function(None)])
+        dataset_props = json.dumps([self.loader.hashable_selection, self.features, self.target_function(None), self.loader.seed])
         sha256_hash = hashlib.sha256(dataset_props.encode("utf-8")).digest()
         hash_string = base64.urlsafe_b64encode(sha256_hash).decode("utf-8")[:10]
         return hash_string
@@ -215,7 +215,7 @@ def main():
         # 9:  100000,
         # 10: 100000
     }
-    loader = GraphDataset(selection=selected_graph_sizes)
+    loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
         dataset = ConnectivityDataset(root, loader, selected_features=[])
