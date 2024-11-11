@@ -129,8 +129,15 @@ class ConnectivityDataset(InMemoryDataset):
         lambdas = sorted(np.linalg.eigvalsh(L))
         return lambdas[1]
 
+    @staticmethod
+    def spectral_radius(G):
+        L = nx.laplacian_matrix(G).toarray()
+        lambdas = np.linalg.eigvalsh(L)
+        return max(abs(lambdas))
+
     def target_function(self, G):
         func = self.algebraic_connectivity
+        # func = self.spectral_radius
         # func = nx.node_connectivity
         # func = nx.effective_graph_resistance
 
@@ -177,7 +184,7 @@ def inspect_dataset(dataset):
     print("=" * len(header))
     print(f"Number of graphs: {len(dataset)}")
     print(f"Number of features: {dataset.num_features} ({dataset.features})")
-    print("Target: algebraic connectivity")
+    print(f"Target: {dataset.target_function(None)}")
     print(f"    Min: {dataset.y.min().item():.3f}")
     print(f"    Max: {dataset.y.max().item():.3f}")
     print(f"    Mean: {dataset.y.mean().item():.3f}")
