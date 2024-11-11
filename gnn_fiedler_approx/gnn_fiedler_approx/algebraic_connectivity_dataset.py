@@ -164,6 +164,11 @@ class ConnectivityDataset(InMemoryDataset):
         assert self._data is not None
         self._data.x = self._data.x[:, mask]
 
+    def normalize_labels(self):
+        """Normalize labels to be in the range [0, 1]."""
+        assert self._data is not None
+        self._data.y = self._data.y / self._data.y.max()
+
 
 def inspect_dataset(dataset):
     print()

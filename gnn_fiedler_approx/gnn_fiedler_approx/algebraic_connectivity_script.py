@@ -37,7 +37,7 @@ from torch_geometric.nn.aggr import (
     SortAggregation,
 )
 
-from gnn_utils.utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters
+from gnn_utils.utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters, create_combined_histogram
 from custom_models import MyGCN
 
 
@@ -156,7 +156,16 @@ class MAPELoss(torch.nn.Module):
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
-def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_size=1.0, seed=42, suppress_output=False):
+def load_dataset(
+    selected_graph_sizes,
+    selected_features=[],
+    normalize_labels=False,
+    split=0.8,
+    batch_size=1.0,
+    seed=42,
+    suppress_output=False,
+):
+    # Save dataset configuration.
     dataset_config = {
         "name": "ConnectivityDataset",
         "selected_graphs": str(selected_graph_sizes),
@@ -172,6 +181,10 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
+
+    # Transforms.
+    if normalize_labels:
+        dataset.normalize_labels()
 
     # General information
     if not suppress_output:
@@ -201,8 +214,8 @@ def load_dataset(selected_graph_sizes, selected_features=[], split=0.8, batch_si
             size: round(train_counter[size] / (train_counter[size] + test_counter[size]), 2)
             for size in set(train_counter + test_counter)
         }
-        print(f"Training dataset: {train_counter} ({train_counter.total()})")
-        print(f"Testing dataset : {test_counter} ({test_counter.total()})")
+        print(f"Training dataset: { {k: v for k, v in sorted(train_counter.items())} } ({train_counter.total()})")
+        print(f"Testing dataset : { {k: v for k, v in sorted(test_counter.items())} } ({test_counter.total()})")
         print(f"Dataset splits  : {splits_per_size}")
 
     # Batch and load data.
@@ -415,15 +428,15 @@ def eval_batch(model, batch, plot_graphs=False):
     )
 
 
-def baseline(train_data, test_data):
+def baseline(train_data, test_data, criterion):
     # Average target value on the given data
     avg = torch.mean(train_data.y)
 
     # Mean absolute error
-    train_mae = torch.mean(torch.abs(train_data.y - avg))
-    test_mae = torch.mean(torch.abs(test_data.y - avg))
+    train = criterion(train_data.y, avg * torch.ones_like(train_data.y))
+    test = criterion(test_data.y, avg * torch.ones_like(test_data.y))
 
-    return train_mae.item(), test_mae.item()
+    return train.item(), test.item()
 
 
 def evaluate(
@@ -466,6 +479,7 @@ def evaluate(
     # Print and plot.
     fig_abs_err = px.histogram(df, x="Error")
     fig_rel_err = px.histogram(df, x="Error %")
+    fig_err_vs_target = create_combined_histogram(df, "True", "Error %")
 
     plot_df = pd.DataFrame()
     plot_df["abs(Error %)"] = np.abs(df["Error %"])
@@ -478,14 +492,15 @@ def evaluate(
     if not suppress_output:
         print(f"Evaluating model at epoch {epoch}.\n")
         print(
-            f"Train loss: {train_loss:.5f}\n"
-            f"Test loss : {test_loss:.5f}\n"
-            f"Mean error: {err_mean:.5f}\n"
-            f"Std. dev. : {err_stddev:.5f}\n\n"
+            f"Train loss: {train_loss:.8f}\n"
+            f"Test loss : {test_loss:.8f}\n"
+            f"Mean error: {err_mean:.8f}\n"
+            f"Std. dev. : {err_stddev:.8f}\n\n"
             f"Error brackets: {json.dumps(good_within, indent=4)}\n"
         )
         fig_abs_err.show()
         fig_rel_err.show()
+        fig_err_vs_target.show()
         fig_err_curve.show()
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
@@ -575,11 +590,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     criterion = torch.nn.L1Loss()
 
     # Print baseline results.
-    baseline_results = baseline(train_data_obj, test_data_obj)
+    baseline_results = baseline(train_data_obj, test_data_obj, criterion)
     print("Baseline results:")
     print("=================")
-    print(f"Train baseline: {baseline_results[0]:.5f}")
-    print(f"Test baseline: {baseline_results[1]:.5f}")
+    print(f"Train baseline: {baseline_results[0]:.8f}")
+    print(f"Test baseline: {baseline_results[1]:.8f}")
     print()
 
     wandb.watch(model, criterion, log="all", log_freq=100)
@@ -643,9 +658,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_sweep:
         print("    ...DONE.")
         if eval_type != EvalType.NONE:
-            print(f"Mean error: {eval_results['mean_err']:.5f}")
-            print(f"Std. dev.: {eval_results['stddev_err']:.5f}")
-        print(f"Duration: {train_results['duration']:.5f} s.")
+            print(f"Mean error: {eval_results['mean_err']:.8f}")
+            print(f"Std. dev.: {eval_results['stddev_err']:.8f}")
+        print(f"Duration: {train_results['duration']:.8f} s.")
     return run
 
 

@@ -1,6 +1,8 @@
 import multiprocessing as mp
 
 import networkx as nx
+import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import torch_geometric.utils as pygUtils
 import wandb
@@ -94,3 +96,53 @@ def add_feature_visualization(pos, data, features):
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def create_combined_histogram(df, bars, line):
+    nbins = int(df[bars].max() * 5)
+
+    hist = np.histogram(df[bars], range=(0, df[bars].max()), bins=nbins)
+    bin_edges = hist[1]
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    temp_df = df[[bars, line]].copy()
+    temp_df["bin"] = pd.cut(df[bars], bins=bin_edges) # type: ignore
+    avg_metric_per_bin = temp_df.groupby("bin")[line].mean()
+
+    fig = go.Figure()
+
+    # Add histogram (count)
+    fig.add_trace(go.Histogram(
+        x=df[bars],
+        name='Count',
+        nbinsx=nbins,
+        xbins=dict(
+            start=0,
+            end=df[bars].max(),
+        )
+    ))
+
+    # Add line plot (average metric)
+    fig.add_trace(go.Scatter(
+        x=bin_centers,
+        y=avg_metric_per_bin,
+        mode='lines+markers',
+        name=f"Average {line}",
+        line=dict(color="red"),
+        marker=dict(size=8),
+        yaxis="y2"
+    ))
+
+    # Update layout for dual y-axes
+    fig.update_layout(
+        xaxis_title=f"{bars} Value",
+        yaxis_title="Count",
+        yaxis2=dict(
+            title=f"Average {line}",
+            overlaying='y',
+            side='right'
+        ),
+        bargap=0,
+    )
+
+    return fig
