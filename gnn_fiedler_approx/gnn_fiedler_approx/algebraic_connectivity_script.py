@@ -75,6 +75,7 @@ def get_global_pooling(name, **kwargs):
         "softmax": torch_aggr.SoftmaxAggregation(learn=True),
         "s2s": torch_aggr.Set2Set,
         "multi": torch_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
+        "multi++": torch_aggr.MultiAggregation,
         "PNA": torch_aggr.DegreeScalerAggregation,
         # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
         # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
@@ -86,7 +87,7 @@ def get_global_pooling(name, **kwargs):
     hc = kwargs["hidden_channels"]
 
     if name == "s2s":
-        pool = pool(in_channels=kwargs["hidden_channels"], processing_steps=4)
+        pool = pool(in_channels=hc, processing_steps=4)
         hc = 2 * hc
     elif name == "PNA":
         pool = pool(
@@ -95,6 +96,15 @@ def get_global_pooling(name, **kwargs):
         hc = len(pool.aggr.aggrs) * len(pool.scaler) * hc
     elif name == "multi":
         hc = len(pool.aggrs) * hc
+    elif name == "multi++":
+        pool = pool(
+            aggrs=[
+                torch_aggr.Set2Set(in_channels=hc, processing_steps=4),
+                torch_aggr.SoftmaxAggregation(learn=True),
+                torch_aggr.MinAggregation(),
+            ]
+        )
+        hc = (2 + 1 + 1) * hc
 
     return pool, hc
 
@@ -510,7 +520,7 @@ def evaluate(
     # Print and plot.
     fig_abs_err = px.histogram(df, x="Error")
     fig_rel_err = px.histogram(df, x="Error %")
-    fig_err_vs_target = create_combined_histogram(df, "True", "Error %")
+    fig_err_vs_true = create_combined_histogram(df, "True", "Error %")
 
     plot_df = pd.DataFrame()
     plot_df["abs(Error %)"] = np.abs(df["Error %"])
@@ -531,7 +541,7 @@ def evaluate(
         )
         fig_abs_err.show()
         fig_rel_err.show()
-        fig_err_vs_target.show()
+        fig_err_vs_true.show()
         fig_err_curve.show()
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
@@ -545,6 +555,7 @@ def evaluate(
         "fig_abs_err": fig_abs_err,
         "fig_rel_err": fig_rel_err,
         "fig_err_curve": fig_err_curve,
+        "fig_err_vs_true": fig_err_vs_true,
         "table": table,
     }
     return results
@@ -683,6 +694,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
                 "abs_err_hist": eval_results["fig_abs_err"],
                 "rel_err_hist": eval_results["fig_rel_err"],
                 "err_curve": eval_results["fig_err_curve"],
+                "err_vs_true_hist": eval_results["fig_err_vs_true"],
             }
         )
 
@@ -691,7 +703,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
         if is_best_run:
             # Name the model with the current time and date to make it uniq
-            model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y%_H%M')}"
+            model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y_%H%M')}"
             artifact = wandb.Artifact(name=model_name, type="model")
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)

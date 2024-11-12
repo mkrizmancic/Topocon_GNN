@@ -18,7 +18,7 @@ parameters:
   activation:
     values: [tanh, relu]
   pool:
-    values: [median, min, s2s, multi]
+    values: [multi++]
   optimizer:
     value: adam
   learning_rate:
