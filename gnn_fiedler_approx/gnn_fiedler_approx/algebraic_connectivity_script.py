@@ -1,9 +1,9 @@
 import argparse
-from collections import Counter
 import datetime
 import enum
 import json
 import pathlib
+from collections import Counter
 
 import codetiming
 import numpy as np
@@ -11,48 +11,35 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
+import torch_geometric
+import torch_geometric.nn.aggr as torch_aggr
+
 # import torchexplorer
 import wandb
 from algebraic_connectivity_dataset import ConnectivityDataset, inspect_dataset
+from custom_models import MyGCN
+from gnn_utils.utils import (
+    count_parameters,
+    create_combined_histogram,
+    create_graph_wandb,
+    extract_graphs_from_batch,
+    graphs_to_tuple,
+)
 from my_graphs_dataset import GraphDataset, GraphType
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import (
-    MLP,
     GAT,
     GCN,
     GIN,
+    MLP,
+    PNA,
     GraphSAGE,
-    global_mean_pool,
-    global_max_pool,
+    PNAConv,
     global_add_pool,
+    global_max_pool,
+    global_mean_pool,
 )
-from torch_geometric.nn.aggr import (
-    MedianAggregation,
-    VarAggregation,
-    StdAggregation,
-    SoftmaxAggregation,
-    PowerMeanAggregation,
-    MLPAggregation,
-    SortAggregation,
-)
-
-from gnn_utils.utils import create_graph_wandb, extract_graphs_from_batch, graphs_to_tuple, count_parameters, create_combined_histogram
-from custom_models import MyGCN
-
-
-GLOBAL_POOLINGS = {
-    "mean": global_mean_pool,
-    "max": global_max_pool,
-    "add": global_add_pool,
-    "median": MedianAggregation(),
-    "var": VarAggregation(),
-    "std": StdAggregation(),
-    "softmax": SoftmaxAggregation(learn=True),
-    # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
-    # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
-    # "sort": SortAggregation,  # Requires sorting node representations
-}
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
@@ -76,6 +63,42 @@ class EvalTarget(enum.Enum):
 # ***************************************
 # *************** MODELS ****************
 # ***************************************
+def get_global_pooling(name, **kwargs):
+    options = {
+        "mean": global_mean_pool,
+        "max": global_max_pool,
+        "add": global_add_pool,
+        "min": torch_aggr.MinAggregation(),
+        "median": torch_aggr.MedianAggregation(),
+        "var": torch_aggr.VarAggregation(),
+        "std": torch_aggr.StdAggregation(),
+        "softmax": torch_aggr.SoftmaxAggregation(learn=True),
+        "s2s": torch_aggr.Set2Set,
+        "multi": torch_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
+        "PNA": torch_aggr.DegreeScalerAggregation,
+        # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
+        # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
+        # "sort": SortAggregation,  # Requires sorting node representations
+    }
+
+    pool = options[name]
+
+    hc = kwargs["hidden_channels"]
+
+    if name == "s2s":
+        pool = pool(in_channels=kwargs["hidden_channels"], processing_steps=4)
+        hc = 2 * hc
+    elif name == "PNA":
+        pool = pool(
+            aggr=["mean", "min", "max", "std"], scaler=["identity", "amplification", "attenuation"], deg=kwargs["deg"]
+        )
+        hc = len(pool.aggr.aggrs) * len(pool.scaler) * hc
+    elif name == "multi":
+        hc = len(pool.aggrs) * hc
+
+    return pool, hc
+
+
 class GNNWrapper(torch.nn.Module):
     def __init__(
         self,
@@ -85,19 +108,22 @@ class GNNWrapper(torch.nn.Module):
         gnn_layers: int,
         mlp_layers: int = 1,
         pool="mean",
+        pool_kwargs={},
         **kwargs,
     ):
         super().__init__()
         self.gnn = gnn_model(
             in_channels=in_channels, hidden_channels=hidden_channels, out_channels=None, num_layers=gnn_layers, **kwargs
         )
-        self.pool = GLOBAL_POOLINGS[pool]
-        # self.classifier = torch.nn.Linear(hidden_channels, 1)
+
+        self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
+
         mlp_layer_list = []
         for i in range(mlp_layers):
             if i < mlp_layers - 1:
-                mlp_layer_list.append(torch.nn.Linear(hidden_channels, hidden_channels))
+                mlp_layer_list.append(torch.nn.Linear(hc, hidden_channels))
                 mlp_layer_list.append(torch.nn.ReLU())
+                hc = hidden_channels
             else:
                 mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
         self.classifier = torch.nn.Sequential(*mlp_layer_list)
@@ -246,7 +272,12 @@ def load_dataset(
                 break
         print("========================================\n")
 
-    return train_data_obj, test_data_obj, dataset_config, features, dataset.num_features  # type: ignore
+    # Compute any necessary or optional dataset properties.
+    dataset_props = {}
+    dataset_props["feature_dim"] = dataset.num_features  # type: ignore
+    dataset_props["in_deg_hist"] = PNAConv.get_degree_histogram(train_loader)
+
+    return train_data_obj, test_data_obj, dataset_config, features, dataset_props
 
 
 # ***************************************
@@ -530,7 +561,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["GraphSAGE"]
+    tags = ["advanced_pooling"]
     if is_best_run:
         tags.append("BEST")
 
@@ -546,22 +577,27 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         # 10: 10000
     }
 
+    # PNA dataset
+    # selected_graph_sizes = {
+    #     GraphType.RANDOM_MIX: (640, range(15, 25))
+    # }
+
     # Set up the run
     # torchexplorer.setup()
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
+    model_kwargs = config.get("model_kwargs", {})
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    model_kwargs = config.get("model_kwargs", {})
     if model_kwargs and model_kwargs["aggr"] == "lstm" and model_kwargs["project"]:
         bs = 0.5
     else:
         bs = 1.0
 
     # Load the dataset.
-    train_data_obj, test_data_obj, dataset_config, features, feature_dim = load_dataset(
+    train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_graph_sizes,
         selected_features=config.get("selected_features", []),
         batch_size=bs,
@@ -573,16 +609,21 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
         wandb.config["selected_features"] = features
 
+    # PNA DegreeScalerAggregation requires the in-degree histogram for normalization.
+    pool_kwargs = dict()
+    pool_kwargs["deg"] = dataset_props["in_deg_hist"]
+
     # Set up the model, optimizer, and criterion.
     model = generate_model(
         config["architecture"],
-        feature_dim,
+        dataset_props["feature_dim"],
         config["hidden_channels"],
         config["gnn_layers"],
         mlp_layers=config["mlp_layers"],
         act=config["activation"],
         dropout=float(config["dropout"]),
         pool=config["pool"],
+        pool_kwargs=pool_kwargs,
         jk=config["jk"] if config["jk"] != "none" else None,
         **model_kwargs,
     )
@@ -703,13 +744,13 @@ if __name__ == "__main__":
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "softmax",
+            "pool": "PNA",
             "jk": "cat",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 100,
+            "epochs": 2000,
             ## Dataset configuration
             # "selected_features": ["random1"]
         }

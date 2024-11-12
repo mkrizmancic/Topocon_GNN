@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import torch_geometric.utils as pygUtils
 import wandb
+
 from .visualize import GraphVisualization
 
 
@@ -71,6 +72,7 @@ def create_graph_vis(G, features=None):
 
 
 def create_graph_wandb(G):
+    """Convert a Plotly figure of the NetworkX graph to a W&B  html representation."""
     # return wandb.Html(plotly.io.to_html(create_graph_vis(G)))
     # return wandb.Image(create_graph_vis(G))
     fig = create_graph_vis(G)
@@ -78,6 +80,7 @@ def create_graph_wandb(G):
 
 
 def create_graph_vis_parallel(graphs):
+    """Create a Plotly figure of a NetworkX graph with parallel processing."""
     with mp.Pool() as pool:
         graph_visuals = pool.imap(create_graph_vis, graphs, chunksize=100)
 
@@ -85,6 +88,7 @@ def create_graph_vis_parallel(graphs):
 
 
 def add_feature_visualization(pos, data, features):
+    """Add a bar chart visualization of node features to a Plotly figure."""
     # Create bar charts for each node
     bar_charts = []
     for i, p in pos.items():
@@ -95,10 +99,18 @@ def add_feature_visualization(pos, data, features):
 
 
 def count_parameters(model):
+    """Return the number of parameters in a PyTorch model."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def create_combined_histogram(df, bars, line):
+    """
+    Create a chart for visualizing the distribution of a metric across a dataset labels.
+
+    Specifically, this function creates a histogram of the frequency of dataset labels (bars)
+    and a line plot of the average error according to some metric (line) across the dataset labels.
+    For example, you can see how much the model makes mistakes for poorly or well connected graphs.
+    """
     nbins = int(df[bars].max() * 5)
 
     hist = np.histogram(df[bars], range=(0, df[bars].max()), bins=nbins)
@@ -107,7 +119,7 @@ def create_combined_histogram(df, bars, line):
 
     temp_df = df[[bars, line]].copy()
     temp_df["bin"] = pd.cut(df[bars], bins=bin_edges) # type: ignore
-    avg_metric_per_bin = temp_df.groupby("bin")[line].mean()
+    avg_metric_per_bin = temp_df.groupby("bin", observed=False)[line].mean()
 
     fig = go.Figure()
 
