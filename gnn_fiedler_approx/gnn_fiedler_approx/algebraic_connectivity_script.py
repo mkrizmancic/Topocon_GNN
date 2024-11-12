@@ -11,20 +11,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
-import torch_geometric
 import torch_geometric.nn.aggr as torch_aggr
-
 # import torchexplorer
 import wandb
-from algebraic_connectivity_dataset import ConnectivityDataset, inspect_dataset
-from custom_models import MyGCN
-from gnn_utils.utils import (
-    count_parameters,
-    create_combined_histogram,
-    create_graph_wandb,
-    extract_graphs_from_batch,
-    graphs_to_tuple,
-)
 from my_graphs_dataset import GraphDataset, GraphType
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -39,6 +28,16 @@ from torch_geometric.nn import (
     global_add_pool,
     global_max_pool,
     global_mean_pool,
+)
+
+from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset
+from gnn_fiedler_approx.custom_models import MyGCN
+from gnn_fiedler_approx.gnn_utils.utils import (
+    count_parameters,
+    create_combined_histogram,
+    create_graph_wandb,
+    extract_graphs_from_batch,
+    graphs_to_tuple,
 )
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
@@ -177,7 +176,7 @@ class GNNWrapper(torch.nn.Module):
             raise ValueError(f"Error in descriptive_name: {e}")
 
 
-premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT]}
+premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
 custom_gnns = {x.__name__: x for x in [MyGCN]}
 
 
@@ -307,6 +306,8 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
     else:
         MyGNN = custom_gnns[architecture]
         model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * gnn_layers)
+
+    device = globals().get("device", "cpu")
     model = model.to(device)
     return model
 
@@ -572,7 +573,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["advanced_pooling"]
+    tags = ["PNA"]
     if is_best_run:
         tags.append("BEST")
 
@@ -602,7 +603,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     model_kwargs = config.get("model_kwargs", {})
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    if model_kwargs and model_kwargs["aggr"] == "lstm" and model_kwargs["project"]:
+    if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):
         bs = 0.5
     else:
         bs = 1.0
@@ -623,6 +624,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # PNA DegreeScalerAggregation requires the in-degree histogram for normalization.
     pool_kwargs = dict()
     pool_kwargs["deg"] = dataset_props["in_deg_hist"]
+    model_kwargs["deg"] = dataset_props["in_deg_hist"]
 
     # Set up the model, optimizer, and criterion.
     model = generate_model(
@@ -751,18 +753,22 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GraphSAGE",
+            "architecture": "PNA",
             "hidden_channels": 32,
-            "gnn_layers": 5,
+            "gnn_layers": 3,
             "mlp_layers": 2,
-            "activation": "tanh",
-            "pool": "PNA",
+            "activation": "relu",
+            "pool": "s2s",
             "jk": "cat",
             "dropout": 0.0,
+            "model_kwargs": {
+                "aggregators": ["min", "max", "mean", "std"],
+                "scalers": ["identity", "amplification", "attenuation"],
+            },
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 2000,
+            "epochs": 1000,
             ## Dataset configuration
             # "selected_features": ["random1"]
         }
