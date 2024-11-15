@@ -1,12 +1,10 @@
 #!/bin/bash
 
-source /home/marko/PROJECTS/graphs_venv/bin/activate
-
 CONFIG_FILE="config/experimenting_sweep.yaml"
-PROJECT="gnn_fiedler_approx_v2"
+PROJECT=<ime_projekta>
 
 # Create the sweep and extract the sweep ID
-SWEEP_ID=$(wandb sweep --project $PROJECT $CONFIG_FILE 2>&1 | tee wandb_sweep.out | grep 'Run' | awk '{print $8}')
+SWEEP_ID=$(~/.local/bin/wandb sweep --project $PROJECT $CONFIG_FILE 2>&1 | tee wandb_sweep.out | grep 'Run' | awk '{print $8}')
 
 # Check if the sweep ID was extracted successfully
 if [ -z "$SWEEP_ID" ]; then
@@ -18,4 +16,4 @@ echo "Sweep created with ID: $SWEEP_ID"
 rm wandb_sweep.out
 
 # Run the wandb agent with the extracted sweep ID
-wandb agent $SWEEP_ID
+~/.local/bin/wandb agent $SWEEP_ID
