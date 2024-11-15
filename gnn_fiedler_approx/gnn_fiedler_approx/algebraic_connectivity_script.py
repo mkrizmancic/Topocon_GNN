@@ -11,10 +11,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
-import torch_geometric
 import torch_geometric.nn.aggr as torch_aggr
-
-# import torchexplorer
 import wandb
 from algebraic_connectivity_dataset import ConnectivityDataset, inspect_dataset
 from custom_models import MyGCN
@@ -33,7 +30,6 @@ from torch_geometric.nn import (
     GCN,
     GIN,
     MLP,
-    PNA,
     GraphSAGE,
     PNAConv,
     global_add_pool,
@@ -76,7 +72,6 @@ def get_global_pooling(name, **kwargs):
         "s2s": torch_aggr.Set2Set,
         "multi": torch_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
         "multi++": torch_aggr.MultiAggregation,
-        "PNA": torch_aggr.DegreeScalerAggregation,
         # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
         # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
         # "sort": SortAggregation,  # Requires sorting node representations
@@ -89,11 +84,6 @@ def get_global_pooling(name, **kwargs):
     if name == "s2s":
         pool = pool(in_channels=hc, processing_steps=4)
         hc = 2 * hc
-    elif name == "PNA":
-        pool = pool(
-            aggr=["mean", "min", "max", "std"], scaler=["identity", "amplification", "attenuation"], deg=kwargs["deg"]
-        )
-        hc = len(pool.aggr.aggrs) * len(pool.scaler) * hc
     elif name == "multi":
         hc = len(pool.aggrs) * hc
     elif name == "multi++":
@@ -218,10 +208,6 @@ def load_dataset(
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
 
-    # Transforms.
-    if normalize_labels:
-        dataset.normalize_labels()
-
     # General information
     if not suppress_output:
         inspect_dataset(dataset)
@@ -285,7 +271,6 @@ def load_dataset(
     # Compute any necessary or optional dataset properties.
     dataset_props = {}
     dataset_props["feature_dim"] = dataset.num_features  # type: ignore
-    dataset_props["in_deg_hist"] = PNAConv.get_degree_histogram(train_loader)
 
     return train_data_obj, test_data_obj, dataset_config, features, dataset_props
 
@@ -414,9 +399,9 @@ def train(
         if epoch % 10 == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
-                f"Train Loss: {train_loss:.4f}, "
-                f"Test Loss: {test_loss:.4f}, "
-                f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
+                f"Train Loss: {train_loss:.5f}, "
+                f"Test Loss: {test_loss:.5f}, "
+                f"Avg. duration: {epoch_timer.stop() / 10:.5f} s"
             )
             epoch_timer.start()
     epoch_timer.stop()
@@ -588,11 +573,6 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         # 10: 10000
     }
 
-    # PNA dataset
-    # selected_graph_sizes = {
-    #     GraphType.RANDOM_MIX: (640, range(15, 25))
-    # }
-
     # Set up the run
     # torchexplorer.setup()
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
@@ -602,7 +582,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     model_kwargs = config.get("model_kwargs", {})
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    if model_kwargs and model_kwargs["aggr"] == "lstm" and model_kwargs["project"]:
+    if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):
         bs = 0.5
     else:
         bs = 1.0
@@ -620,11 +600,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
         wandb.config["selected_features"] = features
 
-    # PNA DegreeScalerAggregation requires the in-degree histogram for normalization.
-    pool_kwargs = dict()
-    pool_kwargs["deg"] = dataset_props["in_deg_hist"]
-
     # Set up the model, optimizer, and criterion.
+    pool_kwargs = dict()
+
     model = generate_model(
         config["architecture"],
         dataset_props["feature_dim"],
@@ -756,7 +734,7 @@ if __name__ == "__main__":
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "PNA",
+            "pool": "max",
             "jk": "cat",
             "dropout": 0.0,
             ## Training configuration
