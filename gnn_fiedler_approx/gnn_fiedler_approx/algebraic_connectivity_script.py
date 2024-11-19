@@ -1,9 +1,11 @@
 import argparse
+import copy
 import datetime
 import enum
 import json
 import pathlib
 from collections import Counter
+import random
 
 import codetiming
 import numpy as np
@@ -30,7 +32,7 @@ from torch_geometric.nn import (
     global_mean_pool,
 )
 
-from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset
+from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset, inspect_graphs
 from gnn_fiedler_approx.custom_models import MyGCN
 from gnn_fiedler_approx.gnn_utils.utils import (
     count_parameters,
@@ -191,10 +193,78 @@ class MAPELoss(torch.nn.Module):
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
+class DatasetTransformer:
+    def __init__(self, method):
+        assert method in [None, "min-max", "z-score"], f"Invalid normalization method '{method}'."
+
+        self.method = method
+        self.params = {}
+
+    def normalize_labels(self, train_dataset, *other_datasets):
+        # No need to do anything.
+        if self.method is None:
+            return train_dataset, *other_datasets
+
+        # Calculate dataset statistics for fitting.
+        self.fit(train_dataset.y)
+
+        # Transform the labels with the calculated statistics.
+        # We need to make a data_list out of Dataset object and then modify individual data.
+        # https://github.com/pyg-team/pytorch_geometric/issues/839
+        train_data_list = [data for data in train_dataset]
+        for data in train_data_list:
+            data.y = self.transform(data.y)
+
+        other_data_list = [[data for data in dataset] for dataset in other_datasets]
+        for dataset in other_data_list:
+            for data in dataset:
+                data.y = self.transform(data.y)
+
+        return train_data_list, *other_data_list
+
+    def denormalize_labels(self, dataset, inplace=False):
+        # No need to do anything.
+        if self.method is None:
+            return dataset
+
+        if not inplace:
+            dataset = [copy.copy(data) for data in dataset]
+
+        for data in dataset:
+            data.y = self.reverse_transform(data.y)
+
+        return dataset
+
+    def fit(self, data):
+        if self.method == "z-score":
+            self.params["mean"] = data.mean().item()
+            self.params["std"] = data.std().item()
+        elif self.method == "min-max":
+            self.params["min"] = data.min().item()
+            self.params["max"] = data.max().item()
+
+    def transform(self, data):
+        if self.method == "z-score":
+            return (data - self.params["mean"]) / self.params["std"]
+        elif self.method == "min-max":
+            return (data - self.params["min"]) / (self.params["max"] - self.params["min"])
+
+    def reverse_transform(self, data):
+        try:
+            if self.method == "z-score":
+                return data * self.params["std"] + self.params["mean"]
+            elif self.method == "min-max":
+                return data * (self.params["max"] - self.params["min"]) + self.params["min"]
+            else:
+                return data
+        except KeyError as e:
+            raise ValueError(f"{e} You must first transform the data using `normalize_*` method.")
+
+
 def load_dataset(
     selected_graph_sizes,
     selected_features=[],
-    normalize_labels=False,
+    label_normalization=None,
     split=0.8,
     batch_size=1.0,
     seed=42,
@@ -217,20 +287,21 @@ def load_dataset(
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
     dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
 
-    # Transforms.
-    if normalize_labels:
-        dataset.normalize_labels()
-
-    # General information
+    # Display general information about the dataset.
     if not suppress_output:
         inspect_dataset(dataset)
 
-    # Store information about the dataset.
+    # Compute any necessary or optional dataset properties.
+    dataset_props = {}
+    dataset_props["feature_dim"] = dataset.num_features  # type: ignore
+
     dataset_config["num_graphs"] = len(dataset)
     features = selected_features if selected_features else dataset.features
 
     # Shuffle and split the dataset.
     # TODO: Splitting after shuffle gives relatively balanced splits between the graph sizes, but it's not perfect.
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
     dataset = dataset.shuffle()
 
@@ -252,6 +323,13 @@ def load_dataset(
         print(f"Training dataset: { {k: v for k, v in sorted(train_counter.items())} } ({train_counter.total()})")
         print(f"Testing dataset : { {k: v for k, v in sorted(test_counter.items())} } ({test_counter.total()})")
         print(f"Dataset splits  : {splits_per_size}")
+
+    # Perform optional transformations.
+    # NOTE: From this point on, the dataset is a list of Data objects, not a Dataset object.
+    dataset_transformer = DatasetTransformer(label_normalization)
+    train_dataset, test_dataset = dataset_transformer.normalize_labels(train_dataset, test_dataset)
+    print(dataset_transformer.params)
+    dataset_props["transformation"] = dataset_transformer
 
     # Batch and load data.
     batch_size = int(np.ceil(dataset_config["batch_size"] * max(len(train_dataset), len(test_dataset))))
@@ -281,9 +359,6 @@ def load_dataset(
                 break
         print("========================================\n")
 
-    # Compute any necessary or optional dataset properties.
-    dataset_props = {}
-    dataset_props["feature_dim"] = dataset.num_features  # type: ignore
     dataset_props["in_deg_hist"] = PNAConv.get_degree_histogram(train_loader)
 
     return train_data_obj, test_data_obj, dataset_config, features, dataset_props
@@ -482,7 +557,7 @@ def baseline(train_data, test_data, criterion):
 
 
 def evaluate(
-    model, epoch, criterion, train_data, test_data, plot_graphs=False, make_table=False, suppress_output=False
+    model, epoch, criterion, train_data, test_data, dst, plot_graphs=False, make_table=False, suppress_output=False
 ):
     # Loss on the train set.
     train_loss = do_test(model, train_data, criterion)
@@ -500,6 +575,9 @@ def evaluate(
             df = eval_batch(model, test_data, plot_graphs)
         else:
             raise ValueError("Data must be a DataLoader or a Batch object.")
+
+    df["True"] = dst.reverse_transform(df["True"])
+    df["Predicted"] = dst.reverse_transform(df["Predicted"])
 
     # Calculate the statistics.
     df["Error"] = df["True"] - df["Predicted"]
@@ -573,7 +651,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["PNA"]
+    tags = ["toy_problem"]
     if is_best_run:
         tags.append("BEST")
 
@@ -601,6 +679,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_sweep:
         print(f"Running sweep with config: {config}...")
     model_kwargs = config.get("model_kwargs", {})
+    pool_kwargs = dict()
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
     if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):
@@ -612,6 +691,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_graph_sizes,
         selected_features=config.get("selected_features", []),
+        label_normalization="z-score",
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=is_sweep,
@@ -622,9 +702,10 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         wandb.config["selected_features"] = features
 
     # PNA DegreeScalerAggregation requires the in-degree histogram for normalization.
-    pool_kwargs = dict()
-    pool_kwargs["deg"] = dataset_props["in_deg_hist"]
-    model_kwargs["deg"] = dataset_props["in_deg_hist"]
+    if config["pool"] == "PNA":
+        pool_kwargs["deg"] = dataset_props["in_deg_hist"]
+    if config["architecture"] == "PNA":
+        model_kwargs["deg"] = dataset_props["in_deg_hist"]
 
     # Set up the model, optimizer, and criterion.
     model = generate_model(
@@ -686,7 +767,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         print("\nEvaluation results:")
         print("===================")
         eval_results = evaluate(
-            model, epoch, criterion, train_data_obj, test_data_obj, plot_graphs, make_table, suppress_output=is_sweep
+            model, epoch, criterion, train_data_obj, test_data_obj, dataset_props["transformation"],
+            plot_graphs, make_table, suppress_output=is_sweep
         )
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
@@ -753,22 +835,18 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "PNA",
+            "architecture": "GraphSAGE",
             "hidden_channels": 32,
-            "gnn_layers": 3,
+            "gnn_layers": 5,
             "mlp_layers": 2,
-            "activation": "relu",
-            "pool": "s2s",
+            "activation": "tanh",
+            "pool": "max",
             "jk": "cat",
             "dropout": 0.0,
-            "model_kwargs": {
-                "aggregators": ["min", "max", "mean", "std"],
-                "scalers": ["identity", "amplification", "attenuation"],
-            },
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 1000,
+            "epochs": 2000,
             ## Dataset configuration
             # "selected_features": ["random1"]
         }

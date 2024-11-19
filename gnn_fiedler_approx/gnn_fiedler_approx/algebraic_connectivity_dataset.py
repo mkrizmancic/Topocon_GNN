@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import json
-import random
 from pathlib import Path
 
 import codetiming
@@ -16,6 +15,8 @@ from my_graphs_dataset import GraphDataset
 
 
 class ConnectivityDataset(InMemoryDataset):
+    # https://github.com/pyg-team/pytorch_geometric/blob/master/torch_geometric/datasets/gdelt.py
+    # If you want to define different graphs for training and testing.
     def __init__(
         self, root, loader: GraphDataset | None = None, transform=None, pre_transform=None, pre_filter=None, **kwargs
     ):
@@ -69,7 +70,9 @@ class ConnectivityDataset(InMemoryDataset):
 
     @property
     def hash_representation(self):
-        dataset_props = json.dumps([self.loader.hashable_selection, self.features, self.target_function(None), self.loader.seed])
+        dataset_props = json.dumps(
+            [self.loader.hashable_selection, self.features, self.target_function(None), self.loader.seed]
+        )
         sha256_hash = hashlib.sha256(dataset_props.encode("utf-8")).digest()
         hash_string = base64.urlsafe_b64encode(sha256_hash).decode("utf-8")[:10]
         return hash_string
@@ -168,33 +171,51 @@ class ConnectivityDataset(InMemoryDataset):
         mask = np.array([name in selected_features for name in self.features])
         # FIXME: This is not a proper way, but I don't know what else to do.
         # https://github.com/pyg-team/pytorch_geometric/discussions/7684
+        # This works only because it is applied to the whole dataset, and before
+        # the split. After splitting, `data` and `_data` still hold references
+        # to the whole dataset, so we can't modify only one part.
         assert self._data is not None
         self._data.x = self._data.x[:, mask]
 
-    def normalize_labels(self):
-        """Normalize labels to be in the range [0, 1]."""
-        assert self._data is not None
-        self._data.y = self._data.y / self._data.y.max()
-
 
 def inspect_dataset(dataset):
+    if isinstance(dataset, InMemoryDataset):
+        dataset_name = dataset.__repr__()
+        y_values = dataset.y
+        y_name = dataset.target_function(None)
+        num_features = dataset.num_features
+        features = dataset.features
+        assert len(features) == num_features
+    else:
+        dataset_name = "N/A"
+        y_values = torch.tensor([data.y for data in dataset])
+        y_name = "N/A"
+        num_features = dataset[0].x.shape[1]
+        features = "N/A"
+
     print()
-    header = f"Dataset: {dataset}"
+    header = f"Dataset: {dataset_name}"
     print(header)
     print("=" * len(header))
     print(f"Number of graphs: {len(dataset)}")
-    print(f"Number of features: {dataset.num_features} ({dataset.features})")
-    print(f"Target: {dataset.target_function(None)}")
-    print(f"    Min: {dataset.y.min().item():.3f}")
-    print(f"    Max: {dataset.y.max().item():.3f}")
-    print(f"    Mean: {dataset.y.mean().item():.3f}")
-    print(f"    Std: {dataset.y.std().item():.3f}")
+    print(f"Number of features: {num_features} ({features})")
+    print(f"Target: {y_name}")
+    print(f"    Min: {y_values.min().item():.3f}")
+    print(f"    Max: {y_values.max().item():.3f}")
+    print(f"    Mean: {y_values.mean().item():.3f}")
+    print(f"    Std: {y_values.std().item():.3f}")
     print("=" * len(header))
     print()
 
 
 def inspect_graphs(dataset, num_graphs=1):
-    for i in random.sample(range(len(dataset)), num_graphs):
+    try:
+        y_name = dataset.target_function(None)
+    except AttributeError:
+        y_name = "Target value"
+
+    for i in range(num_graphs):
+    # for i in random.sample(range(len(dataset)), num_graphs):
         data = dataset[i]  # Get a random graph object
 
         print()
@@ -205,7 +226,7 @@ def inspect_graphs(dataset, num_graphs=1):
         # Gather some statistics about the first graph.
         print(f"Number of nodes: {data.num_nodes}")
         print(f"Number of edges: {data.num_edges}")
-        print(f"Algrebraic connectivity: {data.y.item():.5f}")
+        print(f"{y_name}: {data.y.item():.5f}")
         print(f"Average node degree: {data.num_edges / data.num_nodes:.2f}")
         print(f"Has isolated nodes: {data.has_isolated_nodes()}")
         print(f"Has self-loops: {data.has_self_loops()}")
@@ -231,7 +252,6 @@ def main():
 
     with codetiming.Timer():
         dataset = ConnectivityDataset(root, loader, selected_features=[])
-
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, num_graphs=1)
