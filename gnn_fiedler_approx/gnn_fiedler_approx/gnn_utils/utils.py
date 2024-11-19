@@ -111,10 +111,12 @@ def create_combined_histogram(df, bars, line):
     and a line plot of the average error according to some metric (line) across the dataset labels.
     For example, you can see how much the model makes mistakes for poorly or well connected graphs.
     """
-    nbins = int(df[bars].max() * 5)
+    nbins = int(df[bars].max() * 5) + 1
 
-    hist = np.histogram(df[bars], range=(0, df[bars].max()), bins=nbins)
-    bin_edges = hist[1]
+    df[bars] = df[bars].round(5)
+
+    hist = np.histogram(df[bars], range=(-0.1, df[bars].max() + 0.1), bins=nbins)
+    bin_edges = np.round(hist[1], 3)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
     temp_df = df[[bars, line]].copy()
@@ -124,15 +126,15 @@ def create_combined_histogram(df, bars, line):
     fig = go.Figure()
 
     # Add histogram (count)
-    fig.add_trace(go.Histogram(
-        x=df[bars],
-        name='Count',
-        nbinsx=nbins,
-        xbins=dict(
-            start=0,
-            end=df[bars].max(),
+    fig.add_trace(
+        go.Bar(
+            x=bin_centers,
+            y=hist[0],
+            name="Frequency",
+            hovertemplate="Range: %{customdata[0]} - %{customdata[1]}<br>Count: %{y}<extra></extra>",
+            customdata=[(round(bin_edges[i], 3), round(bin_edges[i + 1], 3)) for i in range(len(bin_edges) - 1)]
         )
-    ))
+    )
 
     # Add line plot (average metric)
     fig.add_trace(go.Scatter(
