@@ -1,11 +1,10 @@
 import argparse
-import copy
 import datetime
 import enum
 import json
 import pathlib
-from collections import Counter
 import random
+from collections import Counter
 
 import codetiming
 import numpy as np
@@ -41,6 +40,7 @@ from gnn_fiedler_approx.gnn_utils.utils import (
     extract_graphs_from_batch,
     graphs_to_tuple,
 )
+from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
@@ -193,74 +193,6 @@ class MAPELoss(torch.nn.Module):
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
-class DatasetTransformer:
-    def __init__(self, method):
-        assert method in [None, "min-max", "z-score"], f"Invalid normalization method '{method}'."
-
-        self.method = method
-        self.params = {}
-
-    def normalize_labels(self, train_dataset, *other_datasets):
-        # No need to do anything.
-        if self.method is None:
-            return train_dataset, *other_datasets
-
-        # Calculate dataset statistics for fitting.
-        self.fit(train_dataset.y)
-
-        # Transform the labels with the calculated statistics.
-        # We need to make a data_list out of Dataset object and then modify individual data.
-        # https://github.com/pyg-team/pytorch_geometric/issues/839
-        train_data_list = [data for data in train_dataset]
-        for data in train_data_list:
-            data.y = self.transform(data.y)
-
-        other_data_list = [[data for data in dataset] for dataset in other_datasets]
-        for dataset in other_data_list:
-            for data in dataset:
-                data.y = self.transform(data.y)
-
-        return train_data_list, *other_data_list
-
-    def denormalize_labels(self, dataset, inplace=False):
-        # No need to do anything.
-        if self.method is None:
-            return dataset
-
-        if not inplace:
-            dataset = [copy.copy(data) for data in dataset]
-
-        for data in dataset:
-            data.y = self.reverse_transform(data.y)
-
-        return dataset
-
-    def fit(self, data):
-        if self.method == "z-score":
-            self.params["mean"] = data.mean().item()
-            self.params["std"] = data.std().item()
-        elif self.method == "min-max":
-            self.params["min"] = data.min().item()
-            self.params["max"] = data.max().item()
-
-    def transform(self, data):
-        if self.method == "z-score":
-            return (data - self.params["mean"]) / self.params["std"]
-        elif self.method == "min-max":
-            return (data - self.params["min"]) / (self.params["max"] - self.params["min"])
-
-    def reverse_transform(self, data):
-        try:
-            if self.method == "z-score":
-                return data * self.params["std"] + self.params["mean"]
-            elif self.method == "min-max":
-                return data * (self.params["max"] - self.params["min"]) + self.params["min"]
-            else:
-                return data
-        except KeyError as e:
-            raise ValueError(f"{e} You must first transform the data using `normalize_*` method.")
-
-
 def load_dataset(
     selected_graph_sizes,
     selected_features=[],
@@ -382,7 +314,6 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
         MyGNN = custom_gnns[architecture]
         model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * gnn_layers)
 
-    device = globals().get("device", "cpu")
     model = model.to(device)
     return model
 
@@ -691,7 +622,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_graph_sizes,
         selected_features=config.get("selected_features", []),
-        label_normalization="z-score",
+        label_normalization=config.get("label_normalization"),
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=is_sweep,
@@ -848,6 +779,7 @@ if __name__ == "__main__":
             "learning_rate": 0.01,
             "epochs": 2000,
             ## Dataset configuration
+            "label_normalization": None,
             # "selected_features": ["random1"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)

@@ -138,8 +138,13 @@ class ConnectivityDataset(InMemoryDataset):
         lambdas = np.linalg.eigvalsh(L)
         return max(abs(lambdas))
 
+    @staticmethod
+    def normalized_algebraic_connectivity(G):
+        return ConnectivityDataset.algebraic_connectivity(G) / (G.number_of_nodes())
+
     def target_function(self, G):
         func = self.algebraic_connectivity
+        # func = self.normalized_algebraic_connectivity
         # func = self.spectral_radius
         # func = nx.node_connectivity
         # func = nx.effective_graph_resistance

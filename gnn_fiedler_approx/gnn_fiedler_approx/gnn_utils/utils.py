@@ -3,6 +3,7 @@ import multiprocessing as mp
 import networkx as nx
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import torch_geometric.utils as pygUtils
 import wandb
@@ -103,7 +104,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def create_combined_histogram(df, bars, line):
+def create_combined_histogram(df, bars, line, option="boxplot"):
     """
     Create a chart for visualizing the distribution of a metric across a dataset labels.
 
@@ -111,17 +112,25 @@ def create_combined_histogram(df, bars, line):
     and a line plot of the average error according to some metric (line) across the dataset labels.
     For example, you can see how much the model makes mistakes for poorly or well connected graphs.
     """
-    nbins = int(df[bars].max() * 5) + 1
+    max_val = int(df[bars].max())
+    if max_val == 1:
+        nbins = 51
+        rangebins = (-0.01, max_val + 0.01)
+    else:
+        nbins = int(df[bars].max() * 5) + 1
+        rangebins = (-0.1, df[bars].max() + 0.1)
 
     df[bars] = df[bars].round(5)
 
-    hist = np.histogram(df[bars], range=(-0.1, df[bars].max() + 0.1), bins=nbins)
+    hist = np.histogram(df[bars], range=rangebins, bins=nbins)
     bin_edges = np.round(hist[1], 3)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
     temp_df = df[[bars, line]].copy()
     temp_df["bin"] = pd.cut(df[bars], bins=bin_edges) # type: ignore
-    avg_metric_per_bin = temp_df.groupby("bin", observed=False)[line].mean()
+    stats = temp_df.groupby("bin", observed=False)[line].agg(['mean', 'std'])
+    mean_per_bin = stats['mean']
+    std_per_bin = stats['std']
 
     fig = go.Figure()
 
@@ -132,31 +141,104 @@ def create_combined_histogram(df, bars, line):
             y=hist[0],
             name="Frequency",
             hovertemplate="Range: %{customdata[0]} - %{customdata[1]}<br>Count: %{y}<extra></extra>",
-            customdata=[(round(bin_edges[i], 3), round(bin_edges[i + 1], 3)) for i in range(len(bin_edges) - 1)]
+            customdata=[(str(round(bin_edges[i], 3)), str(round(bin_edges[i + 1], 3))) for i in range(len(bin_edges) - 1)]
         )
     )
 
-    # Add line plot (average metric)
-    fig.add_trace(go.Scatter(
-        x=bin_centers,
-        y=avg_metric_per_bin,
-        mode='lines+markers',
-        name=f"Average {line}",
-        line=dict(color="red"),
-        marker=dict(size=8),
-        yaxis="y2"
-    ))
+    if option == "mean":
+        # Add line plot (average metric)
+        fig.add_trace(go.Scatter(
+            x=bin_centers,
+            y=mean_per_bin,
+            mode='lines+markers',
+            name=f"Average {line}",
+            line=dict(color=px.colors.qualitative.Plotly[1]),
+            marker=dict(size=8),
+            yaxis="y2"
+        ))
 
-    # Update layout for dual y-axes
-    fig.update_layout(
-        xaxis_title=f"{bars} Value",
-        yaxis_title="Count",
-        yaxis2=dict(
-            title=f"Average {line}",
-            overlaying='y',
-            side='right'
-        ),
-        bargap=0,
-    )
+        # Update layout for dual y-axes
+        fig.update_layout(
+            xaxis_title=f"{bars} Value",
+            yaxis_title="Count",
+            yaxis2=dict(
+                title=f"Average {line}",
+                overlaying='y',
+                side='right'
+            ),
+            bargap=0,
+        )
+
+    elif option == "std":
+        upper_bound = mean_per_bin + std_per_bin
+        lower_bound = mean_per_bin - std_per_bin
+
+        fig.add_trace(go.Scatter(
+            x=np.concatenate([bin_centers, bin_centers[::-1]]),  # Fill between upper and lower bounds
+            y=np.nan_to_num(np.concatenate([upper_bound, lower_bound[::-1]])),
+            fill='toself',
+            fillcolor=px.colors.qualitative.Plotly[1],  # Red shade with transparency
+            opacity=0.2,
+            line=dict(color='rgba(255, 0, 0, 0)'),  # No line for the shaded area
+            hoverinfo="skip",  # Skip hover info for the shaded area
+            name="Std Deviation",
+            yaxis="y2"
+        ))
+
+        # Add line plot for mean
+        fig.add_trace(go.Scatter(
+            x=bin_centers,
+            y=mean_per_bin,
+            mode='lines+markers',
+            name="Mean",
+            line=dict(color=px.colors.qualitative.Plotly[1]),
+            marker=dict(size=8),
+            yaxis="y2"
+        ))
+
+        # Update layout for the plot
+        fig.update_layout(
+            xaxis_title=f"{bars} Value",
+            yaxis_title="Count",
+            yaxis2=dict(
+                title=f"{line} Metrics",
+                overlaying='y',
+                side='right'
+            ),
+            bargap=0.0,  # Controls the gap between bars
+            barmode='overlay',  # Overlay the bars on top of each other
+        )
+
+    elif option == "boxplot":
+        # Add boxplots for errors
+        for i, bin_label in enumerate(temp_df["bin"].cat.categories):
+            # Extract errors for the current bin
+            bin_errors = temp_df.loc[temp_df["bin"] == bin_label, line]
+
+            # Add a boxplot for each bin
+            fig.add_trace(go.Box(
+                y=bin_errors,
+                x=[bin_centers[i]] * len(bin_errors),  # Align with bin center
+                name=f"Bin {i + 1}",
+                marker=dict(color=px.colors.qualitative.Plotly[1]),
+                boxmean=True,  # Show mean as a marker
+                showlegend=(i == 0),  # Show legend only for the first boxplot
+                width=(bin_edges[1] - bin_edges[0]) * 0.8,
+                yaxis="y2"
+            ))
+
+        # Update layout for the plot
+        fig.update_layout(
+            xaxis_title=f"{bars} Value",
+            yaxis_title="Count",
+            yaxis2=dict(
+                title=f"{line} Distribution",
+                overlaying='y',
+                side='right'
+            ),
+            bargap=0,  # Controls the gap between bars
+            barmode='overlay',  # Overlay the bars on top of each other
+            boxmode='group',  # Group the boxplots
+        )
 
     return fig
