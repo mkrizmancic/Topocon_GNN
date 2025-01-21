@@ -696,7 +696,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if eval_type != EvalType.NONE:
         epoch = config["epochs"]
         if eval_target == EvalTarget.BEST:
-            checkpoint = torch.load(BEST_MODEL_PATH)
+            checkpoint = torch.load(BEST_MODEL_PATH, weights_only=False)
             model.load_state_dict(checkpoint["model_state_dict"])
             epoch = checkpoint["epoch"]
 
