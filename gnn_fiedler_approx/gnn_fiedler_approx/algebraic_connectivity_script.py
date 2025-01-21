@@ -322,6 +322,8 @@ def generate_optimizer(model, optimizer, lr, **kwargs):
     """Generate optimizer object based on the model and hyperparameters."""
     if optimizer == "adam":
         return torch.optim.Adam(model.parameters(), lr=lr, **kwargs)
+    elif optimizer == "sgd":
+        return torch.optim.SGD(model.parameters(), lr=lr, **kwargs)
     else:
         raise ValueError("Only Adam optimizer is currently supported.")
 
@@ -421,8 +423,8 @@ def train(
         if epoch % 10 == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
-                f"Train Loss: {train_loss:.4f}, "
-                f"Test Loss: {test_loss:.4f}, "
+                f"Train Loss: {sum(train_losses[epoch-10:epoch]) / 10:.4f}, "
+                f"Test Loss: {sum(test_losses[epoch-10:epoch]) / 10:.4f}, "
                 f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
             )
             epoch_timer.start()
@@ -477,6 +479,9 @@ def eval_batch(model, batch, plot_graphs=False):
 
 
 def baseline(train_data, test_data, criterion):
+    if isinstance(train_data, DataLoader) or isinstance(test_data, DataLoader):
+        return np.inf, np.inf
+
     # Average target value on the given data
     avg = torch.mean(train_data.y)
 
