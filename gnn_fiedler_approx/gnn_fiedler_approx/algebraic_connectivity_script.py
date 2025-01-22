@@ -587,7 +587,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["toy_problem"]
+    tags = ["HPC"]
     if is_best_run:
         tags.append("BEST")
 

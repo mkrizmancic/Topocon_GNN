@@ -12,4 +12,4 @@ From: nvcr.io/nvidia/pyg:24.11-py3
 
  pattern=$( echo ${CUDA_VISIBLE_DEVICES} | tr ',' '|' )
  export CUDA_VISIBLE_DEVICES=$( nvidia-smi -L | egrep "${pattern}" | egrep -o "GPU [0-3]" | egrep -o "[0-3]" | tr "\n" "," | sed 's/,$//' )  
- python $@
+ $@
