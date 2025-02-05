@@ -2,6 +2,7 @@ import argparse
 import datetime
 import enum
 import json
+import os
 import pathlib
 import random
 from collections import Counter
@@ -44,7 +45,7 @@ from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
-BEST_MODEL_PATH /= "best_model.pth"
+BEST_MODEL_NAME = "best_model.pth"
 
 SORT_DATA = False
 
@@ -587,7 +588,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["HPC"]
+    tags = ["normalization", "HPC"]
     if is_best_run:
         tags.append("BEST")
 
@@ -616,6 +617,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         print(f"Running sweep with config: {config}...")
     model_kwargs = config.get("model_kwargs", {})
     pool_kwargs = dict()
+
+    if "PBS_O_HOME" in os.environ:
+        # We are on the HPC - paralel runs use the same disk.
+        global BEST_MODEL_PATH
+        BEST_MODEL_PATH /= f"{run.id}_{BEST_MODEL_NAME}"
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
     if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):

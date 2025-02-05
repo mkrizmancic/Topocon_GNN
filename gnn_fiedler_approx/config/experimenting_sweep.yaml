@@ -1,38 +1,40 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: PNA
+name: normalization
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
   name: test_loss
 parameters:
   architecture:
-    values: [PNA]
+    values: [GraphSAGE]
   hidden_channels:
     values: [32]
   gnn_layers:
-    values: [3, 5]
+    values: [5]
   mlp_layers:
     value: 2
   dropout:
     value: 0.0
   activation:
-    values: [tanh, relu]
+    values: [tanh]
   pool:
-    values: [max, s2s, mean, min]
+    values: [s2s, softmax, multi++, max]
   optimizer:
     value: adam
   learning_rate:
-    values: [0.01, 0.001]
+    values: [0.01]
   epochs:
-    value: 2000
+    value: 5000
   jk:
-    values: [cat, none]
-  model_kwargs:
-    parameters:
-      aggregators:
-        value: [min, max, mean, std]
-      scalers:
-        value: [identity, amplification, attenuation]
+    values: [cat]
+  # model_kwargs:
+  #   parameters:
+  #     aggregators:
+  #       value: [min, max, mean, std]
+  #     scalers:
+  #       value: [identity, amplification, attenuation]
+  label_normalization:
+    values: [null, z-score, boxcox]
 
 command:
   - ${env}
