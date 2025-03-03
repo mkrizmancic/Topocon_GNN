@@ -126,6 +126,7 @@ class GNNWrapper(torch.nn.Module):
         self.gnn = gnn_model(
             in_channels=in_channels, hidden_channels=hidden_channels, out_channels=None, num_layers=gnn_layers, **kwargs
         )
+        self.gnn_is_mlp = isinstance(gnn_model, MLP)
 
         self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
 
@@ -141,7 +142,10 @@ class GNNWrapper(torch.nn.Module):
         self.mlp_layers = mlp_layers
 
     def forward(self, x, edge_index, batch):
-        x = self.gnn(x, edge_index)
+        if self.gnn_is_mlp:
+            x = self.gnn(x=x, batch=batch)
+        else:
+            x = self.gnn(x=x, edge_index=edge_index, batch=batch)
         x = self.pool(x, batch)
         x = self.classifier(x)
         return x
@@ -495,12 +499,12 @@ def baseline(train_data, test_data, criterion):
 def evaluate(
     model, epoch, criterion, train_data, test_data, dst, plot_graphs=False, make_table=False, suppress_output=False
 ):
+    model.eval()
+    df = pd.DataFrame()
+
     # Loss on the train set.
     train_loss = do_test(model, train_data, criterion)
     test_loss = do_test(model, test_data, criterion)
-
-    model.eval()
-    df = pd.DataFrame()
 
     # Build a detailed results DataFrame.
     with torch.no_grad():

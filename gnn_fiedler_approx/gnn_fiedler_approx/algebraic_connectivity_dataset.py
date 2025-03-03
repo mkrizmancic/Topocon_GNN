@@ -90,7 +90,7 @@ class ConnectivityDataset(InMemoryDataset):
         """Process the raw files into a graph dataset."""
         # Read data into huge `Data` list.
         data_list = []
-        for graph in self.loader.graphs(batch_size=1):
+        for graph in self.loader.graphs(batch_size=1, raw=False):
             data_list.append(self.make_data(graph))
 
         if self.pre_filter is not None:
@@ -228,7 +228,7 @@ def inspect_graphs(dataset, num_graphs=1):
         print(header)
         print("=" * len(header))
 
-        # Gather some statistics about the first graph.
+        # Gather some statistics about the graph.
         print(f"Number of nodes: {data.num_nodes}")
         print(f"Number of edges: {data.num_edges}")
         print(f"{y_name}: {data.y.item():.5f}")
