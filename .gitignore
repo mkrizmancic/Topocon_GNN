@@ -195,3 +195,4 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode
 
 *.pickle
+gnn_fiedler_approx (Supek)/
