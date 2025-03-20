@@ -1,18 +1,58 @@
 import base64
+import functools
 import hashlib
 import json
+import random
 from pathlib import Path
 
 import codetiming
 import networkx as nx
 import numpy as np
 import torch
-import torch_geometric.utils as pygUtils
+import torch_geometric.transforms as tg_transforms
+import torch_geometric.utils as tg_utils
 import yaml
-from torch_geometric.data import InMemoryDataset
+from torch_geometric.data import Data, InMemoryDataset
 
 from my_graphs_dataset import GraphDataset
 
+
+class FeatureFilterTransform(tg_transforms.BaseTransform):
+    """
+    A transform that filters features of a graph's node attributes based on a given mask.
+
+    Args:
+        feature_index_mask (list or np.ndarray): A boolean mask or list of indices to filter the features.
+    Methods:
+        forward(data: Data) -> Data:
+            Applies the feature filter to the node attributes of the input data object.
+        __repr__() -> str:
+            Returns a string representation of the transform with the mask.
+    Example:
+        >>> transform = FeatureFilterTransform([0, 2, 4])
+        >>> data = Data(x=torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]))
+        >>> transformed_data = transform(data)
+        >>> print(transformed_data.x)
+        tensor([[ 1,  3,  5],
+                [ 6,  8, 10]])
+    """
+    # NOTE: This is a better way than doing self._data.x = self._data.x[:, mask]
+    # See https://github.com/pyg-team/pytorch_geometric/discussions/7684.
+    # This transform function will be automatically applied to each data object
+    # when it is accessed. It might be a bit slower, but tensor slicing
+    # shouldn't affect the performance too much. It is also following the
+    # intended Dataset design.
+    def __init__(self, feature_index_mask):
+        self.mask = feature_index_mask
+
+    def forward(self, data: Data) -> Data:
+        if self.mask is not None:
+            assert data.x is not None
+            data.x = data.x[:, self.mask]
+        return data
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.mask})'
 
 class ConnectivityDataset(InMemoryDataset):
     # https://github.com/pyg-team/pytorch_geometric/blob/master/torch_geometric/datasets/gdelt.py
@@ -24,17 +64,26 @@ class ConnectivityDataset(InMemoryDataset):
             loader = GraphDataset()
         self.loader = loader
 
-        # Calls InMemoryDataset.__init__ -> calls Dataset.__init__  -> calls Dataset._process -> calls self.process
-        super().__init__(root, transform, pre_transform, pre_filter)
-
         print("*****************************************")
         print(f"** Creating dataset with ID {self.hash_representation} **")
         print("*****************************************")
 
+        # Calls InMemoryDataset.__init__ -> calls Dataset.__init__  -> calls Dataset._process -> calls self.process
+        super().__init__(root, transform, pre_transform, pre_filter)
+
         self.load(self.processed_paths[0])
 
-        if selected_features := kwargs.get("selected_features"):
-            self.filter_features(selected_features)
+        selected_features = kwargs.get("selected_features")
+        selected_extra_feature = kwargs.get("selected_extra_feature")
+        mask = self.get_features_mask(selected_features, selected_extra_feature)
+
+        # Add a feature filter transform to the transform pipeline, if needed.
+        if not np.all(mask):
+            feature_filter = FeatureFilterTransform(mask)
+            if self.transform is not None:
+                self.transform = tg_transforms.Compose([self.transform, feature_filter])
+            else:
+                self.transform = feature_filter
 
     @property
     def raw_dir(self):
@@ -101,7 +150,9 @@ class ConnectivityDataset(InMemoryDataset):
 
         self.save(data_list, self.processed_paths[0])
 
-    # Define features in use.
+    # *************************
+    # *** Feature functions ***
+    # *************************
     @staticmethod
     def one_hot_degree(G):
         degrees = G.degree
@@ -124,8 +175,11 @@ class ConnectivityDataset(InMemoryDataset):
         "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
     }
+    # *************************
 
-    # Define target in use.
+    # ************************
+    # *** Target functions ***
+    # ************************
     @staticmethod
     def algebraic_connectivity(G):
         L = nx.laplacian_matrix(G).toarray()
@@ -162,7 +216,7 @@ class ConnectivityDataset(InMemoryDataset):
             for node in G.nodes():
                 G.nodes[node][feature] = feature_val[node]
 
-        torch_G = pygUtils.from_networkx(G, group_node_attrs=self.features)
+        torch_G = tg_utils.from_networkx(G, group_node_attrs=self.features)
         torch_G.y = torch.tensor(self.target_function(G), dtype=torch.float32)
 
         return torch_G
@@ -171,16 +225,34 @@ class ConnectivityDataset(InMemoryDataset):
     def features(self):
         return list(self.feature_functions.keys())
 
-    def filter_features(self, selected_features):
+    @functools.cached_property
+    def feature_dims(self):
+        """
+        Calculate the dimensions of the features.
+
+        Some features (like one-hot encoding and random) may have variable
+        dimensions so dataset.num_features != len(dataset.features).
+        """
+        feature_dims = {}
+        G = tg_utils.to_networkx(self[0], to_undirected=True)
+        for feature in self.feature_functions:
+            feature_val = self.feature_functions[feature](G)
+            try:
+                feature_dims[feature] = len(feature_val[0])
+            except TypeError:
+                feature_dims[feature] = 1
+        return feature_dims
+
+    def get_features_mask(self, selected_features, selected_extra_feature):
         """Filter out features that are not in the selected features."""
-        mask = np.array([name in selected_features for name in self.features])
-        # FIXME: This is not a proper way, but I don't know what else to do.
-        # https://github.com/pyg-team/pytorch_geometric/discussions/7684
-        # This works only because it is applied to the whole dataset, and before
-        # the split. After splitting, `data` and `_data` still hold references
-        # to the whole dataset, so we can't modify only one part.
-        assert self._data is not None
-        self._data.x = self._data.x[:, mask]
+        flags = []
+        for feature in self.features:
+            val = selected_features is None or feature in selected_features
+            flags.extend([val] * self.feature_dims[feature])
+        for feature in self.extra_features:
+            val = selected_extra_feature is None or feature == selected_extra_feature
+            flags.append(val)
+        return np.array(flags)
 
 
 def inspect_dataset(dataset):
@@ -213,13 +285,33 @@ def inspect_dataset(dataset):
     print()
 
 
-def inspect_graphs(dataset, num_graphs=1):
+def inspect_graphs(dataset, graphs:int | list=1):
+    """
+    Inspect and display information about graphs in a dataset.
+
+    This function prints detailed information about one or more graph objects
+    from the given dataset, including their structural properties and features.
+
+    Args:
+        dataset: A dataset object containing graph data.
+        graphs (int | list, optional): Specifies which graphs to inspect.
+                    If an integer is provided, that many random graphs will be
+                    selected from the dataset. If a list of indices is provided,
+                    the graphs at those indices will be inspected. Defaults to 1.
+    Example:
+        >>> inspect_graphs(my_dataset, graphs=3)
+        >>> inspect_graphs(my_dataset, graphs=[0, 5, 10])
+    """
+
     try:
         y_name = dataset.target_function(None)
     except AttributeError:
         y_name = "Target value"
 
-    for i in range(num_graphs):
+    if isinstance(graphs, int):
+        graphs = random.sample(range(len(dataset)), graphs)
+
+    for i in graphs:
     # for i in random.sample(range(len(dataset)), num_graphs):
         data = dataset[i]  # Get a random graph object
 
@@ -259,7 +351,7 @@ def main():
         dataset = ConnectivityDataset(root, loader, selected_features=[])
 
     inspect_dataset(dataset)
-    inspect_graphs(dataset, num_graphs=1)
+    inspect_graphs(dataset, graphs=1)
 
 
 if __name__ == "__main__":
