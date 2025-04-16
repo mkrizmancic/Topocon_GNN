@@ -13,41 +13,37 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
-import torch_geometric.nn.aggr as torch_aggr
-# import torchexplorer
 import wandb
-from my_graphs_dataset import GraphDataset, GraphType
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import (
-    GAT,
-    GCN,
-    GIN,
-    MLP,
-    PNA,
-    GraphSAGE,
-    PNAConv,
-    global_add_pool,
-    global_max_pool,
-    global_mean_pool,
-)
 
+from my_graphs_dataset import GraphDataset, GraphType
 from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset, inspect_graphs
-from gnn_fiedler_approx.custom_models import MyGCN
+from gnn_fiedler_approx.custom_models import GNNWrapper, premade_gnns, custom_gnns
 from gnn_fiedler_approx.gnn_utils.utils import (
-    count_parameters,
     create_combined_histogram,
     create_graph_wandb,
     extract_graphs_from_batch,
     graphs_to_tuple,
+    print_dataset_splits
 )
 from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer
 
+
+# GLOBAL VARIABLES
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_NAME = "best_model.pth"
 
 SORT_DATA = False
+
+if "PBS_O_HOME" in os.environ:
+    # We are on the HPC - adjust for the CPU count and VRAM.
+    BATCH_SIZE = 1/3
+    NUM_WORKERS = 8
+else:
+    BATCH_SIZE = 1.0
+    NUM_WORKERS = 8
 
 
 class EvalType(enum.Enum):
@@ -63,130 +59,8 @@ class EvalTarget(enum.Enum):
 
 
 # ***************************************
-# *************** MODELS ****************
+# ************** MODULES ****************
 # ***************************************
-def get_global_pooling(name, **kwargs):
-    options = {
-        "mean": global_mean_pool,
-        "max": global_max_pool,
-        "add": global_add_pool,
-        "min": torch_aggr.MinAggregation(),
-        "median": torch_aggr.MedianAggregation(),
-        "var": torch_aggr.VarAggregation(),
-        "std": torch_aggr.StdAggregation(),
-        "softmax": torch_aggr.SoftmaxAggregation(learn=True),
-        "s2s": torch_aggr.Set2Set,
-        "multi": torch_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
-        "multi++": torch_aggr.MultiAggregation,
-        "PNA": torch_aggr.DegreeScalerAggregation,
-        # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
-        # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
-        # "sort": SortAggregation,  # Requires sorting node representations
-    }
-
-    pool = options[name]
-
-    hc = kwargs["hidden_channels"]
-
-    if name == "s2s":
-        pool = pool(in_channels=hc, processing_steps=4)
-        hc = 2 * hc
-    elif name == "PNA":
-        pool = pool(
-            aggr=["mean", "min", "max", "std"], scaler=["identity", "amplification", "attenuation"], deg=kwargs["deg"]
-        )
-        hc = len(pool.aggr.aggrs) * len(pool.scaler) * hc
-    elif name == "multi":
-        hc = len(pool.aggrs) * hc
-    elif name == "multi++":
-        pool = pool(
-            aggrs=[
-                torch_aggr.Set2Set(in_channels=hc, processing_steps=4),
-                torch_aggr.SoftmaxAggregation(learn=True),
-                torch_aggr.MinAggregation(),
-            ]
-        )
-        hc = (2 + 1 + 1) * hc
-
-    return pool, hc
-
-
-class GNNWrapper(torch.nn.Module):
-    def __init__(
-        self,
-        gnn_model,
-        in_channels: int,
-        hidden_channels: int,
-        gnn_layers: int,
-        mlp_layers: int = 1,
-        pool="mean",
-        pool_kwargs={},
-        **kwargs,
-    ):
-        super().__init__()
-        self.gnn = gnn_model(
-            in_channels=in_channels, hidden_channels=hidden_channels, out_channels=None, num_layers=gnn_layers, **kwargs
-        )
-        self.gnn_is_mlp = isinstance(gnn_model, MLP)
-
-        self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
-
-        mlp_layer_list = []
-        for i in range(mlp_layers):
-            if i < mlp_layers - 1:
-                mlp_layer_list.append(torch.nn.Linear(hc, hidden_channels))
-                mlp_layer_list.append(torch.nn.ReLU())
-                hc = hidden_channels
-            else:
-                mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
-        self.classifier = torch.nn.Sequential(*mlp_layer_list)
-        self.mlp_layers = mlp_layers
-
-    def forward(self, x, edge_index, batch):
-        if self.gnn_is_mlp:
-            x = self.gnn(x=x, batch=batch)
-        else:
-            x = self.gnn(x=x, edge_index=edge_index, batch=batch)
-        x = self.pool(x, batch)
-        x = self.classifier(x)
-        return x
-
-    @property
-    def descriptive_name(self):
-        try:
-            # Base name of the used GNN
-            name = [f"{self.gnn.__class__.__name__}"]
-            # Number of layers and size of hidden channel or hidden channels list
-            if hasattr(self.gnn, "channel_list"):
-                name.append(f"{self.gnn.num_layers}x{self.gnn.channel_list[-1]}_{self.mlp_layers}")
-            else:
-                name.append(f"{self.gnn.num_layers}x{self.gnn.hidden_channels}_{self.mlp_layers}")
-            # Activation function
-            name.append(f"{self.gnn.act.__class__.__name__}")
-            # Dropout
-            if isinstance(self.gnn.dropout, torch.nn.Dropout):
-                name.append(f"D{self.gnn.dropout.p:.2f}")
-            else:
-                name.append(f"D{self.gnn.dropout[0]:.2f}")
-            # Pooling layer: either a function or a class
-            if hasattr(self.pool, "__name__"):
-                name.append(f"{self.pool.__name__}")
-            else:
-                name.append(f"{self.pool.__class__.__name__}")
-            # Number of parameters
-            name.append(f"{count_parameters(self)}")
-            # Join all parts and return.
-            name = "-".join(name)
-            return name
-
-        except Exception as e:
-            raise ValueError(f"Error in descriptive_name: {e}")
-
-
-premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
-custom_gnns = {x.__name__: x for x in [MyGCN]}
-
-
 class MAPELoss(torch.nn.Module):
     def __init__(self):
         super(MAPELoss, self).__init__()
@@ -200,7 +74,7 @@ class MAPELoss(torch.nn.Module):
 # ***************************************
 def load_dataset(
     selected_graph_sizes,
-    selected_features=[],
+    selected_features=None,
     label_normalization=None,
     split=0.8,
     batch_size=1.0,
@@ -242,24 +116,26 @@ def load_dataset(
     torch.manual_seed(seed)
     dataset = dataset.shuffle()
 
-    train_size = round(dataset_config["split"] * len(dataset))
-    train_dataset = dataset[:train_size]
-    if len(dataset) - train_size > 0:
-        test_dataset = dataset[train_size:]
+    # Flexible dataset splitting. Can be split to train/test or train/val/test.
+    if isinstance(dataset_config["split"], tuple):
+        train_size, val_size = dataset_config["split"]
+        train_size = round(train_size * len(dataset))
+        val_size = round(val_size * len(dataset))
     else:
-        test_dataset = train_dataset
+        train_size = round(dataset_config["split"] * len(dataset))
+        val_size = len(dataset) - train_size
+
+    train_dataset = dataset[:train_size]
+    if val_size > 0:
+        val_dataset = dataset[train_size:train_size + val_size]
+    else:
+        val_dataset = train_dataset
+    val_size = len(val_dataset)
+    test_dataset = dataset[train_size + val_size:]
     test_size = len(test_dataset)
 
     if not suppress_output:
-        train_counter = Counter([data.x.shape[0] for data in train_dataset])  # type: ignore
-        test_counter = Counter([data.x.shape[0] for data in test_dataset])  # type: ignore
-        splits_per_size = {
-            size: round(train_counter[size] / (train_counter[size] + test_counter[size]), 2)
-            for size in set(train_counter + test_counter)
-        }
-        print(f"Training dataset: { {k: v for k, v in sorted(train_counter.items())} } ({train_counter.total()})")
-        print(f"Testing dataset : { {k: v for k, v in sorted(test_counter.items())} } ({test_counter.total()})")
-        print(f"Dataset splits  : {splits_per_size}")
+        print_dataset_splits(train_dataset, val_dataset, test_dataset)
 
     # Perform optional transformations.
     # NOTE: From this point on, the dataset is a list of Data objects, not a Dataset object.
@@ -269,16 +145,21 @@ def load_dataset(
     dataset_props["transformation"] = dataset_transformer
 
     # Batch and load data.
-    batch_size = int(np.ceil(dataset_config["batch_size"] * max(len(train_dataset), len(test_dataset))))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
+    if isinstance(batch_size, float):
+        max_dataset_len = max(train_size, val_size, test_size)
+        batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=NUM_WORKERS)  # type: ignore
+    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, num_workers=NUM_WORKERS)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size, shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
-    test_batch = next(iter(test_loader))
+    val_batch = next(iter(val_loader))
+    test_batch = next(iter(test_loader)) if test_size else None
 
     train_data_obj = train_batch if train_size <= batch_size else train_loader
-    test_data_obj = test_batch if test_size <= batch_size else test_loader
+    val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
+    test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in test_loader]
 
     if not suppress_output:
         print()
@@ -296,9 +177,9 @@ def load_dataset(
                 break
         print("========================================\n")
 
-    dataset_props["in_deg_hist"] = PNAConv.get_degree_histogram(train_loader)
+    # dataset_props["in_deg_hist"] = PNAConv.get_degree_histogram(train_loader)
 
-    return train_data_obj, test_data_obj, dataset_config, features, dataset_props
+    return train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props
 
 
 # ***************************************
@@ -334,17 +215,17 @@ def generate_optimizer(model, optimizer, lr, **kwargs):
 
 
 def training_pass(model, batch, optimizer, criterion):
-    """Perofrm a single training pass over the batch."""
+    """Perform a single training pass over the batch."""
     if SORT_DATA:
         batch = batch.sort(sort_by_row=False)
 
     data = batch.to(device)  # Move to CUDA if available.
+    optimizer.zero_grad()  # Clear gradients.
     out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
     loss = criterion(out.squeeze(), data.y)  # Compute the loss.
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
-    optimizer.zero_grad()  # Clear gradients.
-    return loss.item()
+    return loss
 
 
 def testing_pass(model, batch, criterion):
@@ -355,7 +236,7 @@ def testing_pass(model, batch, criterion):
     with torch.no_grad():
         data = batch.to(device)
         out = model(data.x, data.edge_index, batch=data.batch)
-        loss = criterion(out.squeeze(), data.y).item()  # Compute the loss.
+        loss = criterion(out.squeeze(), data.y)  # Compute the loss.
     return loss
 
 
@@ -363,46 +244,49 @@ def do_train(model, data, optimizer, criterion):
     """Train the model on individual batches or the entire dataset."""
     model.train()
 
-    if isinstance(data, DataLoader):
-        avg_loss = 0
+    if isinstance(data, (DataLoader, list)):
+        avg_loss = torch.tensor(0.0, device=device)
         for batch in data:  # Iterate in batches over the training dataset.
             avg_loss += training_pass(model, batch, optimizer, criterion)
         loss = avg_loss / len(data)
     elif isinstance(data, Data):
         loss = training_pass(model, data, optimizer, criterion)
     else:
-        raise ValueError("Data must be a DataLoader or a Batch object.")
+        raise ValueError(f"Data must be a DataLoader or a Batch object, but got: {type(data)}.")
 
-    return loss
+    return loss.item()
 
 
 def do_test(model, data, criterion):
     """Test the model on individual batches or the entire dataset."""
     model.eval()
 
-    if isinstance(data, DataLoader):
-        avg_loss = 0
+    if isinstance(data, (DataLoader, list)):
+        avg_loss = torch.tensor(0.0, device=device)
         for batch in data:
             avg_loss += testing_pass(model, batch, criterion)
         loss = avg_loss / len(data)
     elif isinstance(data, Data):
         loss = testing_pass(model, data, criterion)
     else:
-        raise ValueError("Data must be a DataLoader or a Batch object.")
+        raise ValueError(f"Data must be a DataLoader or a Batch object, but got: {type(data)}.")
 
-    return loss
+    return loss.item()
 
 
 def train(
-    model, optimizer, criterion, train_data_obj, test_data_obj, num_epochs=100, suppress_output=False, save_best=False
+    model, optimizer, criterion, train_data_obj, val_data_obj, num_epochs=100, suppress_output=False, save_best=False
 ):
     # GLOBALS: device
 
     # Prepare for training.
     train_losses = np.zeros(num_epochs)
-    test_losses = np.zeros(num_epochs)
+    val_losses = np.zeros(num_epochs)
     best_loss = float("inf")
-    test_loss = 0
+    val_loss = 0
+
+    # This is for the hybrid approach described below.
+    train_data = train_data_obj
 
     # Start the training loop with timer.
     training_timer = codetiming.Timer(logger=None)
@@ -410,33 +294,38 @@ def train(
     training_timer.start()
     epoch_timer.start()
     for epoch in range(1, num_epochs + 1):
+        # Hybrid approach for batching:
+        #   run set number of epochs with one permutation and then get new batches from the DataLoader.
+        if (epoch - 1) % 10 == 0 and isinstance(train_data_obj, DataLoader):
+            train_data = [batch for batch in train_data_obj]
+
         # Perform one pass over the training set and then test on both sets.
-        train_loss = do_train(model, train_data_obj, optimizer, criterion)
-        test_loss = do_test(model, test_data_obj, criterion)
+        train_loss = do_train(model, train_data, optimizer, criterion)
+        val_loss = do_test(model, val_data_obj, criterion)
 
         # Store the losses.
         train_losses[epoch - 1] = train_loss
-        test_losses[epoch - 1] = test_loss
-        wandb.log({"train_loss": train_loss, "test_loss": test_loss})
+        val_losses[epoch - 1] = val_loss
+        wandb.log({"train_loss": train_loss, "val_loss": val_loss})
 
         # Save the best model.
-        if save_best and epoch >= 0.3 * num_epochs and test_loss < best_loss:
+        if save_best and epoch >= 0.3 * num_epochs and val_loss < best_loss:
             torch.save({"epoch": epoch, "model_state_dict": model.state_dict()}, BEST_MODEL_PATH)
-            best_loss = test_loss
+            best_loss = val_loss
 
         # Print the losses every 10 epochs.
         if epoch % 10 == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
                 f"Train Loss: {sum(train_losses[epoch-10:epoch]) / 10:.4f}, "
-                f"Test Loss: {sum(test_losses[epoch-10:epoch]) / 10:.4f}, "
+                f"Val Loss: {sum(val_losses[epoch-10:epoch]) / 10:.4f}, "
                 f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
             )
             epoch_timer.start()
     epoch_timer.stop()
     duration = training_timer.stop()
 
-    results = {"train_losses": train_losses, "test_losses": test_losses, "duration": duration}
+    results = {"train_losses": train_losses, "val_losses": val_losses, "duration": duration}
     return results
 
 
@@ -483,18 +372,19 @@ def eval_batch(model, batch, plot_graphs=False):
     )
 
 
-def baseline(train_data, test_data, criterion):
-    if isinstance(train_data, DataLoader) or isinstance(test_data, DataLoader):
-        return np.inf, np.inf
+def baseline(train_data, val_data, test_data, criterion):
+    if isinstance(train_data, DataLoader) or isinstance(val_data, DataLoader) or isinstance(test_data, DataLoader):
+        return np.inf, np.inf, np.inf
 
     # Average target value on the given data
     avg = torch.mean(train_data.y)
 
     # Mean absolute error
-    train = criterion(train_data.y, avg * torch.ones_like(train_data.y))
-    test = criterion(test_data.y, avg * torch.ones_like(test_data.y))
+    train = criterion(train_data.y, avg * torch.ones_like(train_data.y)).item()
+    val = criterion(val_data.y, avg * torch.ones_like(val_data.y)).item()
+    test = criterion(test_data.y, avg * torch.ones_like(test_data.y)).item() if test_data else np.inf
 
-    return train.item(), test.item()
+    return train, val, test
 
 
 def evaluate(
@@ -554,7 +444,7 @@ def evaluate(
         print(f"Evaluating model at epoch {epoch}.\n")
         print(
             f"Train loss: {train_loss:.8f}\n"
-            f"Test loss : {test_loss:.8f}\n"
+            f"Eval loss : {test_loss:.8f}\n"
             f"Mean error: {err_mean:.8f}\n"
             f"Std. dev. : {err_stddev:.8f}\n\n"
             f"Error brackets: {json.dumps(good_within, indent=4)}\n"
@@ -614,18 +504,27 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # }
 
     # Set up the run
-    # torchexplorer.setup()
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
-    model_kwargs = config.get("model_kwargs", {})
-    pool_kwargs = dict()
 
     if "PBS_O_HOME" in os.environ:
         # We are on the HPC - paralel runs use the same disk.
         global BEST_MODEL_PATH
         BEST_MODEL_PATH /= f"{run.id}_{BEST_MODEL_NAME}"
+    else:
+        BEST_MODEL_PATH /= BEST_MODEL_NAME
+
+    # Set up model configuration.
+    model_kwargs = config.get("model_kwargs", {})
+    pool_kwargs = dict()
+
+    if config["architecture"] == "GIN":
+        model_kwargs.update({"train_eps": True})
+    elif config["architecture"] == "GAT":
+        model_kwargs.update({"v2": True})
+    # TODO: Check
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
     if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):
@@ -634,9 +533,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         bs = 1.0
 
     # Load the dataset.
-    train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
+    train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_graph_sizes,
-        selected_features=config.get("selected_features", []),
+        selected_features=config.get("selected_features", None),
         label_normalization=config.get("label_normalization"),
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
@@ -671,11 +570,12 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     criterion = torch.nn.L1Loss()
 
     # Print baseline results.
-    baseline_results = baseline(train_data_obj, test_data_obj, criterion)
+    baseline_results = baseline(train_data_obj, val_data_obj, test_data_obj, criterion)
     print("Baseline results:")
     print("=================")
     print(f"Train baseline: {baseline_results[0]:.8f}")
-    print(f"Test baseline: {baseline_results[1]:.8f}")
+    print(f"Val baseline: {baseline_results[1]:.8f}")
+    print(f"Test baseline: {baseline_results[2]:.8f}")
     print()
 
     wandb.watch(model, criterion, log="all", log_freq=100)
@@ -689,17 +589,18 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         optimizer,
         criterion,
         train_data_obj,
-        test_data_obj,
+        val_data_obj,
         config["epochs"],
         suppress_output=is_sweep,
         save_best=save_best,
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
-    run.summary["best_test_loss"] = min(train_results["test_losses"])
+    run.summary["best_val_loss"] = min(train_results["val_losses"])
+    run.summary["best_test_loss"] = min(train_results["val_losses"])  # For compatibility with earlier experiments.
     run.summary["duration"] = train_results["duration"]
     if not is_sweep:
         plot_training_curves(
-            config["epochs"], train_results["train_losses"], train_results["test_losses"], type(criterion).__name__
+            config["epochs"], train_results["train_losses"], train_results["val_losses"], type(criterion).__name__
         )
 
     # Run evaluation.
@@ -713,8 +614,15 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         print("\nEvaluation results:")
         print("===================")
         eval_results = evaluate(
-            model, epoch, criterion, train_data_obj, test_data_obj, dataset_props["transformation"],
-            plot_graphs, make_table, suppress_output=is_sweep
+            model,
+            epoch,
+            criterion,
+            train_data_obj,
+            test_data_obj or val_data_obj,
+            dataset_props["transformation"],
+            plot_graphs,
+            make_table,
+            suppress_output=is_sweep
         )
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
@@ -781,13 +689,13 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GraphSAGE",
+            "architecture": "GAT",
             "hidden_channels": 32,
             "gnn_layers": 5,
-            "mlp_layers": 2,
-            "activation": "tanh",
+            "mlp_layers": 1,
+            "activation": "relu",
             "pool": "max",
-            "jk": "cat",
+            "jk": "none",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",

@@ -175,6 +175,7 @@ class ConnectivityDataset(InMemoryDataset):
         "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
     }
+    extra_feature_functions = {}
     # *************************
 
     # ************************
@@ -224,6 +225,10 @@ class ConnectivityDataset(InMemoryDataset):
     @property
     def features(self):
         return list(self.feature_functions.keys())
+
+    @property
+    def extra_features(self):
+        return list(self.extra_feature_functions.keys())
 
     @functools.cached_property
     def feature_dims(self):
@@ -348,7 +353,7 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
-        dataset = ConnectivityDataset(root, loader, selected_features=[])
+        dataset = ConnectivityDataset(root, loader, selected_features=None)
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, graphs=1)
