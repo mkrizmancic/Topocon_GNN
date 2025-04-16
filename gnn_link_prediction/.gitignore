@@ -1,0 +1,6 @@
+Dataset/processed/
+wandb/
+results/
+models/
+HPC/jobs/
+*.sif
