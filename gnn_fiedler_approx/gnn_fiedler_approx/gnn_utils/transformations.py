@@ -3,6 +3,8 @@ import copy
 import torch
 import numpy as np
 import pandas as pd
+import torch_geometric.transforms as tg_transforms
+from torch_geometric.data import Data
 from scipy.special import inv_boxcox
 from scipy.stats import boxcox
 
@@ -90,3 +92,85 @@ class DatasetTransformer:
                 return data
         except KeyError as e:
             raise ValueError(f"{e} You must first transform the data using `normalize_*` method.")
+
+
+class EigenvectorFlipperTransform(tg_transforms.BaseTransform):
+    """
+    A transform that randomly flips the sign of the eigenvector of a graph's Laplacian matrix.
+
+    Args:
+        available_features (list): A list of available features.
+        selected_features (list, optional): A list of selected features to be used.
+        feature_dims (dict): A dictionary of features in use and their corresponding dimensions.
+        feature_name (str, optional): The name of the feature to be transformed.
+    """
+    def __init__(self, available_features, selected_features, feature_dims, feature_name="k_normalized_laplacian"):
+        self.start_idx = 0
+        self.end_idx = 0
+
+        for feature in feature_dims:
+            if feature != feature_name:
+                self.start_idx += feature_dims[feature]
+            else:
+                self.end_idx = self.start_idx + feature_dims[feature_name]
+                break
+
+        self.vector_dim = max(self.end_idx - self.start_idx, 0)
+
+    def __new__(cls, available_features, selected_features, feature_dims, feature_name="k_normalized_laplacian"):
+        if feature_name not in available_features:
+            return None
+        if selected_features is not None and feature_name not in selected_features:
+            return None
+
+        instance = super().__new__(cls)
+        return instance
+
+    def forward(self, data: Data) -> Data:
+        assert data.x is not None
+        data.x[:, self.start_idx:self.end_idx] *= torch.sign(torch.randn(self.vector_dim))
+        return data
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.start_idx}, {self.end_idx})'
+
+
+class RandomNodeFeaturesTransform(tg_transforms.BaseTransform):
+    """
+    A transform that updates the random node features.
+
+    Args:
+        available_features (list): A list of available features.
+        selected_features (list, optional): A list of selected features to be used.
+        feature_dims (dict): A dictionary of features in use and their corresponding dimensions.
+        feature_name (str, optional): The name of the feature to be transformed.
+    """
+    def __init__(self, available_features, selected_features, feature_dims, feature_name="random"):
+        self.start_idx = 0
+        self.end_idx = 0
+
+        for feature in feature_dims:
+            if feature != feature_name:
+                self.start_idx += feature_dims[feature]
+            else:
+                self.end_idx = self.start_idx + feature_dims[feature_name]
+                break
+
+        self.vector_dim = max(self.end_idx - self.start_idx, 0)
+
+    def __new__(cls, available_features, selected_features, feature_dims, feature_name="random"):
+        if feature_name not in available_features:
+            return None
+        if selected_features is not None and feature_name not in selected_features:
+            return None
+
+        instance = super().__new__(cls)
+        return instance
+
+    def forward(self, data: Data) -> Data:
+        assert data.x is not None
+        data.x[:, self.start_idx:self.end_idx] = torch.rand(data.x.shape[0], self.vector_dim)
+        return data
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.start_idx}, {self.end_idx})'

@@ -13,8 +13,10 @@ import torch_geometric.transforms as tg_transforms
 import torch_geometric.utils as tg_utils
 import yaml
 from torch_geometric.data import Data, InMemoryDataset
+from matplotlib import pyplot as plt
 
 from my_graphs_dataset import GraphDataset
+from gnn_utils.transformations import EigenvectorFlipperTransform, RandomNodeFeaturesTransform
 
 
 class FeatureFilterTransform(tg_transforms.BaseTransform):
@@ -54,6 +56,7 @@ class FeatureFilterTransform(tg_transforms.BaseTransform):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({self.mask})'
 
+
 class ConnectivityDataset(InMemoryDataset):
     # https://github.com/pyg-team/pytorch_geometric/blob/master/torch_geometric/datasets/gdelt.py
     # If you want to define different graphs for training and testing.
@@ -69,21 +72,38 @@ class ConnectivityDataset(InMemoryDataset):
         print("*****************************************")
 
         # Calls InMemoryDataset.__init__ -> calls Dataset.__init__  -> calls Dataset._process -> calls self.process
-        super().__init__(root, transform, pre_transform, pre_filter)
+        super().__init__(root, transform, pre_transform, pre_filter, force_reload=kwargs.get("force_reload", False))
 
         self.load(self.processed_paths[0])
 
         selected_features = kwargs.get("selected_features")
         selected_extra_feature = kwargs.get("selected_extra_feature")
         mask = self.get_features_mask(selected_features, selected_extra_feature)
+        self.dynamic_features = False  # Flag indicating that features may change in each epoch.
+
+        # Build a list of transforms to be applied to the dataset.
+        transforms = []
+        if self.transform is not None:
+            transforms.append(self.transform)
+
+        # Add a transform to randomly flip the eigenvector of the Laplacian matrix in each epoch.
+        eigenvector_flipper = EigenvectorFlipperTransform(self.features, selected_features, self.feature_dims)
+        if eigenvector_flipper is not None:
+            transforms.append(eigenvector_flipper)
+            self.dynamic_features = True
+
+        # Add a transform to draw new random features in each epoch.
+        random_feature = RandomNodeFeaturesTransform(self.features, selected_features, self.feature_dims)
+        if random_feature is not None:
+            transforms.append(random_feature)
+            self.dynamic_features = True
 
         # Add a feature filter transform to the transform pipeline, if needed.
         if not np.all(mask):
             feature_filter = FeatureFilterTransform(mask)
-            if self.transform is not None:
-                self.transform = tg_transforms.Compose([self.transform, feature_filter])
-            else:
-                self.transform = feature_filter
+            transforms.append(feature_filter)
+
+        self.transform = tg_transforms.Compose(transforms)
 
     @property
     def raw_dir(self):
@@ -161,19 +181,141 @@ class ConnectivityDataset(InMemoryDataset):
             ohd[node] = [1.0 if i == deg else 0.0 for i in range(10)]
         return ohd
 
+    @staticmethod
+    def nodes_at_distance_k(G, k):
+        result = {}
+        for node in G.nodes():
+            lengths = nx.single_source_shortest_path_length(G, node, cutoff=k)
+            count_at_k = sum(1 for dist in lengths.values() if dist == k)
+            result[node] = count_at_k
+        return result
+
+    @staticmethod
+    def weak_2_coloring(G):
+        coloring = {}
+        visited = set()
+
+        for start in G.nodes():
+            if start in visited:
+                continue
+
+            coloring[start] = 0
+            visited.add(start)
+            for u, v in nx.bfs_edges(G, start):
+                if v not in coloring:
+                    coloring[v] = 1 - coloring[u]
+                    visited.add(v)
+
+        return coloring
+
+    @staticmethod
+    def k_cycle_count_dfs(G, K):
+        """
+        Counts simple cycles of length 1 to K that involve each node using DFS.
+        """
+        result = {node: [0]*K for node in G.nodes()}
+
+        def dfs(start, current, path, depth):
+            if depth > K:
+                return
+            for neighbor in G.neighbors(current):
+                if neighbor == start and depth >= 1:
+                    cycle_len = depth + 1
+                    if cycle_len <= K:
+                        for node in path:
+                            result[node][cycle_len - 1] += 1
+                elif neighbor not in path:
+                    dfs(start, neighbor, path + [neighbor], depth + 1)
+
+        for node in G.nodes():
+            dfs(node, node, [node], 0)
+
+        # Remove overcounting: undirected cycles are counted 2L times
+        for node in result:
+            for i in range(K):
+                result[node][i] //= 2 * (i + 1)
+
+        # Remove results for K=1 and K=2. These are not cycles.
+        for node in result:
+            result[node] = result[node][2:]
+
+        return result
+
+    @staticmethod
+    def k_cycle_count_matrix(G, K):
+        """
+        Counts number of cycles (actually walks) at each node using adjacency matrix powers.
+        By definition, cycles can be counted multiple times.
+        """
+        A_ = nx.adjacency_matrix(G).astype(int)
+        results = {node: [] for node in G.nodes()}
+
+        A = A_ @ A_  # A^2
+
+        for _ in range(K - 2):  # K-2 because we skip A and A^2
+            A = A @ A_
+            for i, node in enumerate(G.nodes()):
+                results[node].append(int(A[i, i]))
+        return results
+
+    @staticmethod
+    def A_matrix_row(G, size):
+        """
+        Returns the row of the adjacency matrix for each node.
+        """
+        A = nx.to_numpy_array(G)
+        n = A.shape[0]
+        A = np.hstack([A, np.zeros((n, size - n))])
+        results = {node: A[i, :] for i, node in enumerate(G.nodes())}
+        return results
+
+    @staticmethod
+    def L_matrix_row(G, size):
+        """
+        Returns the row of the Laplacian matrix for each node.
+        """
+        L = nx.laplacian_matrix(G).toarray()
+        n = L.shape[0]
+        L = np.hstack([L, np.zeros((n, size - n))])
+        results = {node: L[i, :] for i, node in enumerate(G.nodes())}
+        return results
+
+    @staticmethod
+    def k_normalized_laplacian(G, k):
+        """
+        Returns the k-th power of the normalized Laplacian matrix for each node.
+        """
+        L = nx.normalized_laplacian_matrix(G).toarray()
+        lambdas, vectors = np.linalg.eigh(L)
+        sort = lambdas.argsort()
+        vectors = vectors[:, sort]
+        return {node: vectors[i, :k] for i, node in enumerate(G.nodes())}
+
     feature_functions = {
         # "zero": lambda g: dict.fromkeys(g.nodes(), 0),
         # "one": lambda g: dict.fromkeys(g.nodes(), 1),
-        # "random1": lambda g: {n: np.random.uniform() for n in g.nodes()},
-        # "random2": lambda g: {n: np.random.uniform() for n in g.nodes()},
         "degree": lambda g: {n: float(g.degree(n)) for n in g.nodes()},
-        "degree_centrality": nx.degree_centrality,
+        "2-degree": lambda g: ConnectivityDataset.nodes_at_distance_k(g, 2),
+        "weak_2_coloring": lambda g: ConnectivityDataset.weak_2_coloring(g),
+        "K_cycle_count_dfs": lambda g: ConnectivityDataset.k_cycle_count_dfs(g, 4),
+        "K_cycle_count_matrix": lambda g: ConnectivityDataset.k_cycle_count_matrix(g, 4),
+        "A_matrix_row": lambda g: ConnectivityDataset.A_matrix_row(g, 8),
+        "L_matrix_row": lambda g: ConnectivityDataset.L_matrix_row(g, 8),
+        "k_normalized_laplacian": lambda g: ConnectivityDataset.k_normalized_laplacian(g, 3),
+        "random": lambda g: nx.random_layout(g, seed=np.random), # This works because GraphDataset loader sets the seed
+
+        # "degree_centrality": nx.degree_centrality,
         # "core_number": nx.core_number,
         # "triangles": nx.triangles,
         # "clustering": nx.clustering,
         # "close_centrality": nx.closeness_centrality,
         "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
+    }
+    transform_feature_functions = {
+        "random_walk_pe": (tg_transforms.AddRandomWalkPE(4, attr_name=None), 4),
+        "one_hot_degree": (tg_transforms.OneHotDegree(10), 11),
+        "local_degree_profile": (tg_transforms.LocalDegreeProfile(), 5),
     }
     extra_feature_functions = {}
     # *************************
@@ -217,14 +359,19 @@ class ConnectivityDataset(InMemoryDataset):
             for node in G.nodes():
                 G.nodes[node][feature] = feature_val[node]
 
-        torch_G = tg_utils.from_networkx(G, group_node_attrs=self.features)
+        torch_G = tg_utils.from_networkx(G, group_node_attrs=list(self.feature_functions.keys()))
+        torch_G.x = torch_G.x.to(torch.float32)
+
+        for feature in self.transform_feature_functions:
+            torch_G = self.transform_feature_functions[feature][0](torch_G)
+
         torch_G.y = torch.tensor(self.target_function(G), dtype=torch.float32)
 
         return torch_G
 
     @property
     def features(self):
-        return list(self.feature_functions.keys())
+        return list(self.feature_functions.keys()) + list(self.transform_feature_functions.keys())
 
     @property
     def extra_features(self):
@@ -246,6 +393,10 @@ class ConnectivityDataset(InMemoryDataset):
                 feature_dims[feature] = len(feature_val[0])
             except TypeError:
                 feature_dims[feature] = 1
+
+        for feature in self.transform_feature_functions:
+            feature_dims[feature] = self.transform_feature_functions[feature][1]
+
         return feature_dims
 
     def get_features_mask(self, selected_features, selected_extra_feature):
@@ -265,22 +416,17 @@ def inspect_dataset(dataset):
         dataset_name = dataset.__repr__()
         y_values = dataset.y
         y_name = dataset.target_function(None)
-        num_features = dataset.num_features
-        features = dataset.features
-        assert len(features) == num_features
     else:
         dataset_name = "N/A"
         y_values = torch.tensor([data.y for data in dataset])
         y_name = "N/A"
-        num_features = dataset[0].x.shape[1]
-        features = "N/A"
 
     print()
     header = f"Dataset: {dataset_name}"
     print(header)
     print("=" * len(header))
-    print(f"Number of graphs: {len(dataset)}")
-    print(f"Number of features: {num_features} ({features})")
+    print(f"Num. of graphs: {len(dataset)}")
+    print(f"Feature dims. : {dataset.feature_dims}")
     print(f"Target: {y_name}")
     print(f"    Min: {y_values.min().item():.3f}")
     print(f"    Max: {y_values.max().item():.3f}")
@@ -337,26 +483,31 @@ def inspect_graphs(dataset, graphs:int | list=1):
         print("=" * len(header))
         print()
 
+        G = tg_utils.to_networkx(data, to_undirected=True)
+        nx.draw(G, with_labels=True)
+        plt.show()
+
 
 def main():
     root = Path(__file__).parents[1] / "Dataset"
     selected_graph_sizes = {
         3: -1,
         4: -1,
-        5: -1,
-        6: -1,
-        7: -1,
-        8: -1,
+        # 5: -1,
+        # 6: -1,
+        # 7: -1,
+        # 8: -1,
         # 9:  100000,
         # 10: 100000
     }
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
-        dataset = ConnectivityDataset(root, loader, selected_features=None)
+        dataset = ConnectivityDataset(root, loader, selected_features=["degree"], force_reload=True)
 
     inspect_dataset(dataset)
-    inspect_graphs(dataset, graphs=1)
+    inspect_graphs(dataset, graphs=[1])
+
 
 
 if __name__ == "__main__":

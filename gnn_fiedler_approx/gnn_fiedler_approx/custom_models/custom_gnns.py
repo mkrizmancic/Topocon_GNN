@@ -107,9 +107,9 @@ class GNNWrapper(torch.nn.Module):
     ):
         super().__init__()
         self.gnn = gnn_model(
-            in_channels=in_channels, hidden_channels=hidden_channels, out_channels=None, num_layers=gnn_layers, **kwargs
+            in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=gnn_layers, **kwargs
         )
-        self.gnn_is_mlp = isinstance(gnn_model, MLP)
+        self.gnn_is_mlp = isinstance(self.gnn, MLP)
 
         self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
 

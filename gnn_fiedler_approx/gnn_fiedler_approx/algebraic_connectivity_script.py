@@ -108,6 +108,7 @@ def load_dataset(
 
     dataset_config["num_graphs"] = len(dataset)
     features = selected_features if selected_features else dataset.features
+    dynamic_features = dataset.dynamic_features
 
     # Shuffle and split the dataset.
     # TODO: Splitting after shuffle gives relatively balanced splits between the graph sizes, but it's not perfect.
@@ -157,7 +158,7 @@ def load_dataset(
     val_batch = next(iter(val_loader))
     test_batch = next(iter(test_loader)) if test_size else None
 
-    train_data_obj = train_batch if train_size <= batch_size else train_loader
+    train_data_obj = train_batch if (train_size <= batch_size and not dynamic_features) else train_loader
     val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
     test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in test_loader]
 
@@ -482,7 +483,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["normalization", "HPC"]
+    tags = ["adv. features", "HPC"]
     if is_best_run:
         tags.append("BEST")
 
@@ -689,21 +690,21 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GAT",
+            "architecture": "GraphSAGE",
             "hidden_channels": 32,
             "gnn_layers": 5,
-            "mlp_layers": 1,
-            "activation": "relu",
-            "pool": "max",
-            "jk": "none",
+            "mlp_layers": 2,
+            "activation": "tanh",
+            "pool": "softmax",
+            "jk": "cat",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
-            "learning_rate": 0.01,
+            "learning_rate": 0.005,
             "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
-            # "selected_features": ["random1"]
+            # "selected_features": ["degree", "random_walk_pe"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()
