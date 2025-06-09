@@ -76,6 +76,7 @@ def load_dataset(
     selected_graph_sizes,
     selected_features=None,
     label_normalization=None,
+    transform=None,
     split=0.8,
     batch_size=1.0,
     seed=42,
@@ -96,7 +97,7 @@ def load_dataset(
     except NameError:
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
-    dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features)
+    dataset = ConnectivityDataset(root, graphs_loader, selected_features=selected_features, transform=transform)
 
     # Display general information about the dataset.
     if not suppress_output:
@@ -483,7 +484,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["adv. features", "HPC"]
+    tags = ["selected adv. features"]
     if is_best_run:
         tags.append("BEST")
 
@@ -704,7 +705,7 @@ if __name__ == "__main__":
             "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
-            # "selected_features": ["degree", "random_walk_pe"]
+            "selected_features": ["degree", "degree_centrality", "A_matrix_row"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()

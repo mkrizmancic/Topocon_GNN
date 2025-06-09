@@ -16,7 +16,7 @@ from torch_geometric.data import Data, InMemoryDataset
 from matplotlib import pyplot as plt
 
 from my_graphs_dataset import GraphDataset
-from gnn_utils.transformations import EigenvectorFlipperTransform, RandomNodeFeaturesTransform
+from gnn_fiedler_approx.gnn_utils.transformations import EigenvectorFlipperTransform, RandomNodeFeaturesTransform
 
 
 class FeatureFilterTransform(tg_transforms.BaseTransform):
@@ -304,11 +304,11 @@ class ConnectivityDataset(InMemoryDataset):
         "k_normalized_laplacian": lambda g: ConnectivityDataset.k_normalized_laplacian(g, 3),
         "random": lambda g: nx.random_layout(g, seed=np.random), # This works because GraphDataset loader sets the seed
 
-        # "degree_centrality": nx.degree_centrality,
-        # "core_number": nx.core_number,
-        # "triangles": nx.triangles,
-        # "clustering": nx.clustering,
-        # "close_centrality": nx.closeness_centrality,
+        "degree_centrality": nx.degree_centrality,
+        "core_number": nx.core_number,
+        "triangles": nx.triangles,
+        "clustering": nx.clustering,
+        "close_centrality": nx.closeness_centrality,
         "betweenness_centrality": nx.betweenness_centrality,
         # "one_hot_degree": one_hot_degree,
     }

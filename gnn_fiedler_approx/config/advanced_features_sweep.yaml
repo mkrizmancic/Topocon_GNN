@@ -1,5 +1,5 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: advanced_features
+name: selected_advanced_features
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
@@ -22,47 +22,25 @@ parameters:
   optimizer:
     value: adam
   learning_rate:
-    values: [0.001]
+    values: [0.001, 0.005]
   epochs:
     value: 2000
   jk:
     values: [cat]
   selected_features:
     values:
-      - [degree]
-      - ["2-degree"]
-      - [degree, "2-degree"]
-      - [weak_2_coloring]
-      - [degree, weak_2_coloring]
-      - [K_cycle_count_dfs]
-      - [degree, K_cycle_count_dfs]
-      - [K_cycle_count_matrix]
-      - [degree, K_cycle_count_matrix]
-      - [A_matrix_row]
-      - [degree, A_matrix_row]
-      - [L_matrix_row]
-      - [degree, L_matrix_row]
-      - [k_normalized_laplacian]
-      - [degree, k_normalized_laplacian]
-      - [random]
-      - [degree, random]
-      - [random_walk_pe]
-      - [degree, random_walk_pe]
-      - [one_hot_degree]
-      - [local_degree_profile]
-      - [betweenness_centrality]
-      - [betweenness_centrality, degree]
-      - [betweenness_centrality, "2-degree"]
-      - [betweenness_centrality, weak_2_coloring]
-      - [betweenness_centrality, K_cycle_count_dfs]
-      - [betweenness_centrality, K_cycle_count_matrix]
-      - [betweenness_centrality, A_matrix_row]
-      - [betweenness_centrality, L_matrix_row]
-      - [betweenness_centrality, k_normalized_laplacian]
-      - [betweenness_centrality, random]
-      - [betweenness_centrality, random_walk_pe]
-      - [betweenness_centrality, one_hot_degree]
-      - [betweenness_centrality, local_degree_profile]
+      - [degree, degree_centrality, betweenness_centrality]
+      - [degree, degree_centrality, betweenness_centrality, K_cycle_count_matrix]
+      - [degree, degree_centrality, betweenness_centrality, A_matrix_row]
+      - [degree, degree_centrality, betweenness_centrality, random_walk_pe]
+      - [degree, degree_centrality]
+      - [degree, degree_centrality, K_cycle_count_matrix]
+      - [degree, degree_centrality, A_matrix_row]
+      - [degree, degree_centrality, random_walk_pe]
+      - [degree, degree_centrality, core_number, triangles, clustering, close_centrality]
+      - [degree, degree_centrality, core_number, triangles, clustering, close_centrality, K_cycle_count_matrix]
+      - [degree, degree_centrality, core_number, triangles, clustering, close_centrality, A_matrix_row]
+      - [degree, degree_centrality, core_number, triangles, clustering, close_centrality, random_walk_pe]
 command:
   - ${env}
   - ${interpreter}
