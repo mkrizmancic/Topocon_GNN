@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import torch
 import wandb
 from torch_geometric.data import Data
@@ -28,6 +29,8 @@ from gnn_fiedler_approx.gnn_utils.utils import (
     print_dataset_splits
 )
 from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer
+
+pio.renderers.default = "browser"  # Use browser for Plotly visualizations.
 
 
 # GLOBAL VARIABLES

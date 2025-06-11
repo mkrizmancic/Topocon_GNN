@@ -140,7 +140,7 @@ class ConnectivityDataset(InMemoryDataset):
     @property
     def hash_representation(self):
         dataset_props = json.dumps(
-            [self.loader.hashable_selection, self.features, self.target_function(None), self.loader.seed]
+            [self.loader.hashable_selection, self.feature_dims, self.target_function(None), self.loader.seed]
         )
         sha256_hash = hashlib.sha256(dataset_props.encode("utf-8")).digest()
         hash_string = base64.urlsafe_b64encode(sha256_hash).decode("utf-8")[:10]
@@ -386,7 +386,7 @@ class ConnectivityDataset(InMemoryDataset):
         dimensions so dataset.num_features != len(dataset.features).
         """
         feature_dims = {}
-        G = tg_utils.to_networkx(self[0], to_undirected=True)
+        G = nx.path_graph(3)  # Dummy graph to get the feature dimensions.
         for feature in self.feature_functions:
             feature_val = self.feature_functions[feature](G)
             try:
