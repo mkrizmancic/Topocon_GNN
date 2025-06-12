@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import enum
+import importlib
 import json
 import os
 import pathlib
@@ -195,7 +196,7 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
     # GLOBALS: device, premade_gnns, custom_gnns
     if architecture in premade_gnns:
         model = GNNWrapper(
-            gnn_model=premade_gnns[architecture],
+            gnn_model=getattr(importlib.import_module("torch_geometric.nn"), architecture),
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             gnn_layers=gnn_layers,

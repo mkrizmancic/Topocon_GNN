@@ -1,14 +1,9 @@
 import torch
-import torch_geometric.nn.aggr as torch_aggr
+import torch_geometric.nn as torchg_nn
+import torch_geometric.nn.aggr as torchg_aggr
 from torch_geometric.nn import Sequential, GCNConv
 from torch_geometric.nn import (
-    GAT,
-    GCN,
-    GIN,
     MLP,
-    PNA,
-    GraphSAGE,
-    PNAConv,
     global_add_pool,
     global_max_pool,
     global_mean_pool,
@@ -52,23 +47,25 @@ def get_global_pooling(name, **kwargs):
         "mean": global_mean_pool,
         "max": global_max_pool,
         "add": global_add_pool,
-        "min": torch_aggr.MinAggregation(),
-        "median": torch_aggr.MedianAggregation(),
-        "var": torch_aggr.VarAggregation(),
-        "std": torch_aggr.StdAggregation(),
-        "softmax": torch_aggr.SoftmaxAggregation(learn=True),
-        "s2s": torch_aggr.Set2Set,
-        "multi": torch_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
-        "multi++": torch_aggr.MultiAggregation,
-        "PNA": torch_aggr.DegreeScalerAggregation,
+        "min": torchg_aggr.MinAggregation(),
+        "median": torchg_aggr.MedianAggregation(),
+        "var": torchg_aggr.VarAggregation(),
+        "std": torchg_aggr.StdAggregation(),
+        "softmax": torchg_aggr.SoftmaxAggregation(learn=True),
+        "s2s": torchg_aggr.Set2Set,
+        "multi": torchg_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
+        "multi++": torchg_aggr.MultiAggregation,
+        "PNA": torchg_aggr.DegreeScalerAggregation,
         # "powermean": PowerMeanAggregation(learn=True),  # Results in NaNs and error
         # "mlp": MLPAggregation,  # NOT a permutation-invariant operator
         # "sort": SortAggregation,  # Requires sorting node representations
     }
 
-    pool = options[name]
-
     hc = kwargs["hidden_channels"]
+    if name is None:
+        return None, kwargs["hidden_channels"]
+
+    pool = options[name]
 
     if name == "s2s":
         pool = pool(in_channels=hc, processing_steps=4)
@@ -83,9 +80,9 @@ def get_global_pooling(name, **kwargs):
     elif name == "multi++":
         pool = pool(
             aggrs=[
-                torch_aggr.Set2Set(in_channels=hc, processing_steps=4),
-                torch_aggr.SoftmaxAggregation(learn=True),
-                torch_aggr.MinAggregation(),
+                torchg_aggr.Set2Set(in_channels=hc, processing_steps=4),
+                torchg_aggr.SoftmaxAggregation(learn=True),
+                torchg_aggr.MinAggregation(),
             ]
         )
         hc = (2 + 1 + 1) * hc
@@ -129,7 +126,8 @@ class GNNWrapper(torch.nn.Module):
             x = self.gnn(x=x, batch=batch)
         else:
             x = self.gnn(x=x, edge_index=edge_index, batch=batch)
-        x = self.pool(x, batch)
+        if self.pool is not None:
+            x = self.pool(x, batch)
         x = self.classifier(x)
         return x
 
@@ -165,5 +163,5 @@ class GNNWrapper(torch.nn.Module):
             raise ValueError(f"Error in descriptive_name: {e}")
 
 
-premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
+premade_gnns = torchg_nn.models.classes
 custom_gnns = {x.__name__: x for x in [MyGCN]}
