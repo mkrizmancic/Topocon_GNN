@@ -1,45 +1,45 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: normalization
-method: grid  # Bayesian works for small number of continuous parameters.
+name: batchsize_sweep
+method: bayes  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
-  name: test_loss
+  name: val_loss
 parameters:
   architecture:
-    values: [GraphSAGE]
+    value: GraphSAGE
   hidden_channels:
-    values: [32]
+    value: 32
   gnn_layers:
-    values: [5]
+    value: 5
   mlp_layers:
     value: 2
   dropout:
     value: 0.0
   activation:
-    values: [tanh]
+    value: tanh
   pool:
-    values: [s2s, softmax, multi++, max]
+    value: softmax
+  jk:
+    value: cat
   optimizer:
     value: adam
   learning_rate:
-    values: [0.01]
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.1
+  batch_size:
+    values: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
   epochs:
-    value: 5000
-  jk:
-    values: [cat]
+    value: 1500
   # model_kwargs:
   #   parameters:
   #     aggregators:
   #       value: [min, max, mean, std]
   #     scalers:
   #       value: [identity, amplification, attenuation]
-  label_normalization:
-    values: [null, z-score, boxcox]
   selected_features:
     values:
-      - [degree, degree_centrality, betweenness_centrality]
       - [degree, degree_centrality, core_number, triangles, clustering, close_centrality]
-
 command:
   - ${env}
   - ${interpreter}

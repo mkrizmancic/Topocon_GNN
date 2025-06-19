@@ -6,7 +6,6 @@ import json
 import os
 import pathlib
 import random
-from collections import Counter
 
 import codetiming
 import numpy as np
@@ -43,9 +42,11 @@ SORT_DATA = False
 
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
-    BATCH_SIZE = 1/3
+    ON_HPC = True
+    BATCH_SIZE = 1.0
     NUM_WORKERS = 8
 else:
+    ON_HPC = False
     BATCH_SIZE = 1.0
     NUM_WORKERS = 8
 
@@ -302,8 +303,8 @@ def train(
     for epoch in range(1, num_epochs + 1):
         # Hybrid approach for batching:
         #   run set number of epochs with one permutation and then get new batches from the DataLoader.
-        if (epoch - 1) % 10 == 0 and isinstance(train_data_obj, DataLoader):
-            train_data = [batch for batch in train_data_obj]
+        # if (epoch - 1) % 10 == 0 and isinstance(train_data_obj, DataLoader):
+            # train_data = [batch for batch in train_data_obj]
 
         # Perform one pass over the training set and then test on both sets.
         train_loss = do_train(model, train_data, optimizer, criterion)
@@ -312,22 +313,33 @@ def train(
         # Store the losses.
         train_losses[epoch - 1] = train_loss
         val_losses[epoch - 1] = val_loss
-        wandb.log({"train_loss": train_loss, "val_loss": val_loss})
 
         # Save the best model.
         if save_best and epoch >= 0.3 * num_epochs and val_loss < best_loss:
             torch.save({"epoch": epoch, "model_state_dict": model.state_dict()}, BEST_MODEL_PATH)
             best_loss = val_loss
 
+        # Log to wandb.
+        if epoch % 10 == 0 and (ON_HPC or not suppress_output):
+            avg_train_loss = np.mean(train_losses[max(0, epoch - 10):epoch])
+            avg_val_loss = np.mean(val_losses[max(0, epoch - 10):epoch])
+
+        if ON_HPC:
+            if epoch % 10 == 0:
+                wandb.log({"train_loss": avg_train_loss, "val_loss": avg_val_loss}, step=epoch)
+        else:
+            wandb.log({"train_loss": train_loss, "val_loss": val_loss})
+
         # Print the losses every 10 epochs.
         if epoch % 10 == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
-                f"Train Loss: {sum(train_losses[epoch-10:epoch]) / 10:.4f}, "
-                f"Val Loss: {sum(val_losses[epoch-10:epoch]) / 10:.4f}, "
+                f"Train Loss: {avg_train_loss:.4f}, "
+                f"Val Loss: {avg_val_loss:.4f}, "
                 f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
             )
             epoch_timer.start()
+
     epoch_timer.stop()
     duration = training_timer.stop()
 
@@ -488,7 +500,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["selected adv. features"]
+    tags = ["batch_size", "HPC"]
     if is_best_run:
         tags.append("BEST")
 
@@ -515,7 +527,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_sweep:
         print(f"Running sweep with config: {config}...")
 
-    if "PBS_O_HOME" in os.environ:
+    if ON_HPC:
         # We are on the HPC - paralel runs use the same disk.
         global BEST_MODEL_PATH
         BEST_MODEL_PATH /= f"{run.id}_{BEST_MODEL_NAME}"
@@ -532,11 +544,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         model_kwargs.update({"v2": True})
     # TODO: Check
 
+    bs = config.get("batch_size", BATCH_SIZE)
+
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):
+    if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project") and bs > 0.5:
         bs = 0.5
-    else:
-        bs = 1.0
 
     # Load the dataset.
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
@@ -706,10 +718,11 @@ if __name__ == "__main__":
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.005,
+            "batch_size": 4096,
             "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
-            "selected_features": ["degree", "degree_centrality", "A_matrix_row"]
+            "selected_features": ["degree", "degree_centrality", "core_number", "triangles", "clustering", "close_centrality"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()
