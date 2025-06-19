@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import random
+from typing import Union
 
 import codetiming
 import numpy as np
@@ -44,11 +45,11 @@ USE_HYBRID_LOADING = False
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
     ON_HPC = True
-    BATCH_SIZE = 1.0
+    BATCH_SIZE = "100%"
     NUM_WORKERS = 8
 else:
     ON_HPC = False
-    BATCH_SIZE = 1.0
+    BATCH_SIZE = "100%"
     NUM_WORKERS = 8
 
 
@@ -84,7 +85,7 @@ def load_dataset(
     label_normalization=None,
     transform=None,
     split=0.8,
-    batch_size=1.0,
+    batch_size: Union[int, str] = "100%",
     seed=42,
     suppress_output=False,
 ):
@@ -153,9 +154,10 @@ def load_dataset(
     dataset_props["transformation"] = dataset_transformer
 
     # Batch and load data.
-    if isinstance(batch_size, float):
+    if isinstance(batch_size, str):
+        bs = float(batch_size.strip("%")) / 100.0
         max_dataset_len = max(train_size, val_size, test_size)
-        batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
+        batch_size = int(np.ceil(bs * max_dataset_len))
     loader_kwargs = {"num_workers": NUM_WORKERS, "persistent_workers": True if NUM_WORKERS > 0 else False}
     train_loader = DataLoader(train_dataset, batch_size, shuffle=True, **loader_kwargs)  # type: ignore
     val_loader = DataLoader(val_dataset, batch_size, shuffle=False, **loader_kwargs)  # type: ignore
@@ -724,7 +726,7 @@ if __name__ == "__main__":
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.005,
-            "batch_size": 1.0,
+            "batch_size": "100%",
             "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
