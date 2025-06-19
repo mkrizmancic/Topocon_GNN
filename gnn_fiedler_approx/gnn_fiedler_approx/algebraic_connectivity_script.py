@@ -39,6 +39,7 @@ BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_NAME = "best_model.pth"
 
 SORT_DATA = False
+USE_HYBRID_LOADING = False
 
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
@@ -166,8 +167,12 @@ def load_dataset(
     test_batch = next(iter(test_loader)) if test_size else None
 
     train_data_obj = train_batch if (train_size <= batch_size and not dynamic_features) else train_loader
-    val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
-    test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in test_loader]
+    if USE_HYBRID_LOADING:
+        val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
+        test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in test_loader]
+    else:
+        val_data_obj = val_batch if val_size <= batch_size else val_loader
+        test_data_obj = test_batch if test_size <= batch_size else test_loader
 
     if not suppress_output:
         print()
@@ -230,7 +235,7 @@ def training_pass(model, batch, optimizer, criterion):
     data = batch.to(device)  # Move to CUDA if available.
     optimizer.zero_grad()  # Clear gradients.
     out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
-    loss = criterion(out.squeeze(), data.y)  # Compute the loss.
+    loss = criterion(out.squeeze(dim=1), data.y)  # Compute the loss.
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
     return loss
@@ -244,7 +249,7 @@ def testing_pass(model, batch, criterion):
     with torch.no_grad():
         data = batch.to(device)
         out = model(data.x, data.edge_index, batch=data.batch)
-        loss = criterion(out.squeeze(), data.y)  # Compute the loss.
+        loss = criterion(out.squeeze(dim=1), data.y)  # Compute the loss.
     return loss
 
 
@@ -304,8 +309,8 @@ def train(
     for epoch in range(1, num_epochs + 1):
         # Hybrid approach for batching:
         #   run set number of epochs with one permutation and then get new batches from the DataLoader.
-        # if (epoch - 1) % 10 == 0 and isinstance(train_data_obj, DataLoader):
-            # train_data = [batch for batch in train_data_obj]
+        if USE_HYBRID_LOADING and (epoch - 1) % 10 == 0 and isinstance(train_data_obj, DataLoader):
+            train_data = [batch for batch in train_data_obj]
 
         # Perform one pass over the training set and then test on both sets.
         train_loss = do_train(model, train_data, optimizer, criterion)
@@ -363,7 +368,7 @@ def eval_batch(model, batch, plot_graphs=False):
     # Make predictions.
     data = batch.to(device)
     out = model(data.x, data.edge_index, data.batch)
-    predictions = out.cpu().numpy().squeeze()
+    predictions = out.cpu().squeeze(dim=1).numpy()
     ground_truth = data.y.cpu().numpy()
 
     # Extract graphs and create visualizations.
