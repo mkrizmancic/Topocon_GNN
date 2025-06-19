@@ -155,8 +155,9 @@ def load_dataset(
     if isinstance(batch_size, float):
         max_dataset_len = max(train_size, val_size, test_size)
         batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
-    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=NUM_WORKERS)  # type: ignore
-    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, num_workers=NUM_WORKERS)  # type: ignore
+    loader_kwargs = {"num_workers": NUM_WORKERS, "persistent_workers": True if NUM_WORKERS > 0 else False}
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, **loader_kwargs)  # type: ignore
+    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, **loader_kwargs)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size, shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
@@ -718,7 +719,7 @@ if __name__ == "__main__":
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.005,
-            "batch_size": 4096,
+            "batch_size": 1.0,
             "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
