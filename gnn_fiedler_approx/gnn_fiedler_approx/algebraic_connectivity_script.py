@@ -501,14 +501,15 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # GLOBALS: device
 
     # Helper boolean flags.
+    is_sweep = config is None
     save_best = eval_target == EvalTarget.BEST
     plot_graphs = eval_type == EvalType.FULL
     make_table = eval_type.value > EvalType.BASIC.value
+    suppress_output = is_sweep or ON_HPC
 
     # Tags for W&B.
-    is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["batch_size", "HPC"]
+    tags = ["batch_size_fair", "HPC"]
     if is_best_run:
         tags.append("BEST")
 
@@ -565,7 +566,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         label_normalization=config.get("label_normalization"),
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
-        suppress_output=is_sweep,
+        suppress_output=suppress_output,
     )
 
     wandb.config["dataset"] = dataset_config
@@ -617,14 +618,14 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         train_data_obj,
         val_data_obj,
         config["epochs"],
-        suppress_output=is_sweep,
+        suppress_output=suppress_output,
         save_best=save_best,
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
     run.summary["best_val_loss"] = min(train_results["val_losses"])
     run.summary["best_test_loss"] = min(train_results["val_losses"])  # For compatibility with earlier experiments.
     run.summary["duration"] = train_results["duration"]
-    if not is_sweep:
+    if not suppress_output:
         plot_training_curves(
             config["epochs"], train_results["train_losses"], train_results["val_losses"], type(criterion).__name__
         )
@@ -648,7 +649,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             dataset_props["transformation"],
             plot_graphs,
             make_table,
-            suppress_output=is_sweep
+            suppress_output=suppress_output
         )
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
