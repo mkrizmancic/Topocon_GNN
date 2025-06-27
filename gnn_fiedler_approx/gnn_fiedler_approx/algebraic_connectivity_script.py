@@ -263,7 +263,7 @@ def do_train(model, data, optimizer, criterion):
         avg_loss = torch.tensor(0.0, device=device)
         for batch in data:  # Iterate in batches over the training dataset.
             avg_loss += training_pass(model, batch, optimizer, criterion)
-        loss = avg_loss / len(data)
+        loss = avg_loss / len(data)  # TODO: Doesn't work for different batch sizes?
     elif isinstance(data, Data):
         loss = training_pass(model, data, optimizer, criterion)
     else:
@@ -557,7 +557,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
     if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project") and bs > 0.5:
-        bs = 0.5
+        bs = "50%"
 
     # Load the dataset.
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
@@ -673,12 +673,12 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)
 
+    print(f"Duration: {train_results['duration']:.8f} s.")
     if is_sweep:
         print("    ...DONE.")
         if eval_type != EvalType.NONE:
             print(f"Mean error: {eval_results['mean_err']:.8f}")
             print(f"Std. dev.: {eval_results['stddev_err']:.8f}")
-        print(f"Duration: {train_results['duration']:.8f} s.")
     return run
 
 

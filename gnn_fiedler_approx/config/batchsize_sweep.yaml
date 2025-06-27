@@ -1,5 +1,5 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: batchsize_sweep
+name: batchsize_sweep_100_dropout
 method: bayes  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
@@ -14,7 +14,10 @@ parameters:
   mlp_layers:
     value: 2
   dropout:
-    value: 0.0
+    distribution: q_uniform
+    q: 0.05
+    min: 0.0
+    max: 1.0
   activation:
     value: tanh
   pool:
@@ -25,12 +28,12 @@ parameters:
     value: adam
   learning_rate:
     distribution: log_uniform_values
-    min: 0.0001
-    max: 0.1
+    min: 0.00001
+    max: 0.5
   batch_size:
-    values: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+    value: "100%"
   epochs:
-    value: 1500
+    value: 20000
   # model_kwargs:
   #   parameters:
   #     aggregators:

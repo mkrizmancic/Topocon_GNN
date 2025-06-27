@@ -103,6 +103,14 @@ class GNNWrapper(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self.pre_scaler = torch.nn.Linear(in_channels, hidden_channels)
+
+        self.pre_scaler = None
+        if kwargs.pop("pre_scaler", False):
+            # If pre-scaling is enabled, the input channels are scaled to hidden channels
+            self.pre_scaler = torch.nn.Linear(in_channels, hidden_channels)
+            in_channels = hidden_channels
+
         self.gnn = gnn_model(
             in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=gnn_layers, **kwargs
         )
@@ -122,6 +130,8 @@ class GNNWrapper(torch.nn.Module):
         self.mlp_layers = mlp_layers
 
     def forward(self, x, edge_index, batch):
+        if self.pre_scaler is not None:
+            x = self.pre_scaler(x)  # Pre-scaling the input features
         if self.gnn_is_mlp:
             x = self.gnn(x=x, batch=batch)
         else:
@@ -136,6 +146,9 @@ class GNNWrapper(torch.nn.Module):
         try:
             # Base name of the used GNN
             name = [f"{self.gnn.__class__.__name__}"]
+            # Pre-scaling layer
+            if self.pre_scaler is not None:
+                name.append("lin")
             # Number of layers and size of hidden channel or hidden channels list
             if hasattr(self.gnn, "channel_list"):
                 name.append(f"{self.gnn.num_layers}x{self.gnn.channel_list[-1]}_{self.mlp_layers}")
