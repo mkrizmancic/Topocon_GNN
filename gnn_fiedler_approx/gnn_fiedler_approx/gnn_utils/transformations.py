@@ -9,6 +9,41 @@ from scipy.special import inv_boxcox
 from scipy.stats import boxcox
 
 
+def resolve_transform(transform_names, **transform_kwargs):
+    """
+    Resolves the transform class based on the provided name and arguments.
+
+    Args:
+        transform_name (str): The name of the transform to resolve.
+        **transform_kwargs: Additional keyword arguments for the transform.
+
+    Returns:
+        A new instance of the resolved transform class.
+    """
+    if transform_names is None:
+        return None
+
+    if isinstance(transform_names, str):
+        transform_names = [transform_names]
+
+    options = {
+        "normalize_features": tg_transforms.NormalizeFeatures,}
+
+    transforms = []
+    for name in transform_names:
+        if isinstance(name, str):
+            transform_name = name.lower()
+        else:
+            raise ValueError(f"Transform name must be a string, got {type(name)}.")
+
+        try:
+            transforms.append(options[transform_name](**transform_kwargs))
+        except KeyError:
+            raise ValueError(f"Transform '{transform_name}' is not recognized. Available transforms: {list(options.keys())}.")
+
+    return tg_transforms.Compose(transforms)
+
+
 class DatasetTransformer:
     def __init__(self, method):
         assert method in [None, "min-max", "z-score", "boxcox", "cuberoot"], f"Invalid normalization method '{method}'."

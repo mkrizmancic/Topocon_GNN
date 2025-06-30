@@ -100,6 +100,8 @@ class GNNWrapper(torch.nn.Module):
         mlp_layers: int = 1,
         pool="mean",
         pool_kwargs={},
+        norm=None,
+        norm_kwargs=None,
         **kwargs,
     ):
         super().__init__()
@@ -112,7 +114,13 @@ class GNNWrapper(torch.nn.Module):
             in_channels = hidden_channels
 
         self.gnn = gnn_model(
-            in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=gnn_layers, **kwargs
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=hidden_channels,
+            num_layers=gnn_layers,
+            norm=norm,
+            norm_kwargs=norm_kwargs,
+            **kwargs,
         )
         self.gnn_is_mlp = isinstance(self.gnn, MLP)
 

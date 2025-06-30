@@ -5,8 +5,9 @@ metric:
   goal: minimize
   name: val_loss
 parameters:
+# Model configuration
   architecture:
-    values: [GraphSAGE, GIN, GAT]
+    value: GraphSAGE
   hidden_channels:
     value: 32
   gnn_layers:
@@ -19,23 +20,26 @@ parameters:
     values: [tanh, relu]
   pool:
     values: [softmax, max]
+  norm:
+    values: [null, batch, layer_node, layer_graph, instance, graph]
+  jk:
+    value: cat
+# Training configuration
   optimizer:
     value: adam
   learning_rate:
-    values: [0.001, 0.0005, 0.0001]
+    value: 0.001
   batch_size:
-    value: 256
+    values: [32, 256, "100%"]
   epochs:
-    value: 200
-  jk:
-    value: cat
-  model_kwargs:
-    parameters:
-      pre_scaler:
-        values: [True, False]
+    value: 100_000
+# Dataset configuration
   selected_features:
     values:
       - [degree, degree_centrality, core_number, triangles, clustering, close_centrality]
+  transform:
+    values: [null, normalize_features]
+
 
 command:
   - ${env}

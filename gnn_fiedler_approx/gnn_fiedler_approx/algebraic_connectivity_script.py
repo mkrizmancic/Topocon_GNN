@@ -30,7 +30,7 @@ from gnn_fiedler_approx.gnn_utils.utils import (
     graphs_to_tuple,
     print_dataset_splits
 )
-from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer
+from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer, resolve_transform
 
 pio.renderers.default = "browser"  # Use browser for Plotly visualizations.
 
@@ -98,6 +98,9 @@ def load_dataset(
         "batch_size": batch_size,
         "seed": seed,
     }
+
+    # Resolve the transforms.
+    transform = resolve_transform(transform)
 
     # Load the dataset.
     try:
@@ -510,7 +513,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Tags for W&B.
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["batch_size_fair", "HPC"]
+    tags = ["norm_layers"]
+    if ON_HPC:
+        tags.append("HPC")
     if is_best_run:
         tags.append("BEST")
 
@@ -544,6 +549,14 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     else:
         BEST_MODEL_PATH /= BEST_MODEL_NAME
 
+    # TODO: It would be better to define these conditions in the config file.
+    if config["batch_size"] == "100%":
+        config.update({"learning_rate": 0.0012199, "dropout": 0.05}, allow_val_change=True)
+    elif config["batch_size"] == 32:
+        config.update({"learning_rate": 0.00045955}, allow_val_change=True)
+    elif config["batch_size"] == 256:
+        config.update({"learning_rate": 0.001036}, allow_val_change=True)
+
     # Set up model configuration.
     model_kwargs = config.get("model_kwargs", {})
     pool_kwargs = dict()
@@ -565,6 +578,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         selected_graph_sizes,
         selected_features=config.get("selected_features", None),
         label_normalization=config.get("label_normalization"),
+        transform=config.get("transform"),
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=suppress_output,
@@ -580,6 +594,17 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if config["architecture"] == "PNA":
         model_kwargs["deg"] = dataset_props["in_deg_hist"]
 
+    # Split the normalization layer string.
+    norm = config.get("norm")
+    norm_kwargs = dict()
+    if norm is not None and "_" in norm:
+        norm_type, norm_param = norm.split("_", 1)
+        if norm_type == "layer":
+            norm_kwargs["mode"] = norm_param
+        else:
+            raise ValueError(f"Unknown normalization type: {norm}.")
+        norm = norm_type
+
     # Update number of epochs for fair evaluation.
     config.update({"epochs": round(config["epochs"] / dataset_props["num_batches"])}, allow_val_change=True)
 
@@ -594,6 +619,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         dropout=float(config["dropout"]),
         pool=config["pool"],
         pool_kwargs=pool_kwargs,
+        norm=norm,
+        norm_kwargs=norm_kwargs,
         jk=config["jk"] if config["jk"] != "none" else None,
         **model_kwargs,
     )
@@ -727,6 +754,7 @@ if __name__ == "__main__":
             "mlp_layers": 2,
             "activation": "tanh",
             "pool": "softmax",
+            "norm": "message",
             "jk": "cat",
             "dropout": 0.0,
             ## Training configuration
@@ -736,6 +764,7 @@ if __name__ == "__main__":
             "epochs": 5000,
             ## Dataset configuration
             "label_normalization": None,
+            "transform": "normalize_features",
             "selected_features": ["degree", "degree_centrality", "core_number", "triangles", "clustering", "close_centrality"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
