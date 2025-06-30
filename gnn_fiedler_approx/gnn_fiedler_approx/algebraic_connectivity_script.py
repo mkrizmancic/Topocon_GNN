@@ -606,7 +606,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         norm = norm_type
 
     # Update number of epochs for fair evaluation.
-    config.update({"epochs": round(config["epochs"] / dataset_props["num_batches"])}, allow_val_change=True)
+    if "iterations" in config:
+        config.update({"epochs": round(config["iterations"] / dataset_props["num_batches"])}, allow_val_change=True)
 
     # Set up the model, optimizer, and criterion.
     model = generate_model(
@@ -614,14 +615,14 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         dataset_props["feature_dim"],
         config["hidden_channels"],
         config["gnn_layers"],
-        mlp_layers=config["mlp_layers"],
-        act=config["activation"],
-        dropout=float(config["dropout"]),
-        pool=config["pool"],
+        mlp_layers=config.get("mlp_layers", 1),
+        act=config.get("activation", "relu"),
+        dropout=float(config.get("dropout", 0.0)),
+        pool=config.get("pool", "max"),
         pool_kwargs=pool_kwargs,
         norm=norm,
         norm_kwargs=norm_kwargs,
-        jk=config["jk"] if config["jk"] != "none" else None,
+        jk=config.get("jk"),
         **model_kwargs,
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])

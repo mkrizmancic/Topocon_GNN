@@ -113,6 +113,9 @@ class GNNWrapper(torch.nn.Module):
             self.pre_scaler = torch.nn.Linear(in_channels, hidden_channels)
             in_channels = hidden_channels
 
+        if kwargs.get("jk") == "none":
+            kwargs["jk"] = None
+
         self.gnn = gnn_model(
             in_channels=in_channels,
             hidden_channels=hidden_channels,
