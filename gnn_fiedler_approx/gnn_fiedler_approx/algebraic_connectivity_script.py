@@ -3,6 +3,7 @@ import datetime
 import enum
 import importlib
 import json
+import math
 import os
 import pathlib
 import random
@@ -154,9 +155,9 @@ def load_dataset(
     dataset_props["transformation"] = dataset_transformer
 
     # Batch and load data.
+    max_dataset_len = max(train_size, val_size, test_size)
     if isinstance(batch_size, str):
         bs = float(batch_size.strip("%")) / 100.0
-        max_dataset_len = max(train_size, val_size, test_size)
         batch_size = int(np.ceil(bs * max_dataset_len))
     loader_kwargs = {"num_workers": NUM_WORKERS, "persistent_workers": True if NUM_WORKERS > 0 else False}
     train_loader = DataLoader(train_dataset, batch_size, shuffle=True, **loader_kwargs)  # type: ignore
@@ -176,9 +177,10 @@ def load_dataset(
         val_data_obj = val_batch if val_size <= batch_size else val_loader
         test_data_obj = test_batch if test_size <= batch_size else test_loader
 
+    dataset_props["num_batches"] = math.ceil(max_dataset_len / batch_size)
     if not suppress_output:
         print()
-        print("Batches:")
+        print(f"Batches: ({dataset_props['num_batches']})")
         print("========================================")
         for step, data in enumerate(train_loader):
             print(f"Step {step + 1}:")
@@ -290,7 +292,7 @@ def do_test(model, data, criterion):
 
 
 def train(
-    model, optimizer, criterion, train_data_obj, val_data_obj, num_epochs=100, suppress_output=False, save_best=False
+    model, optimizer, criterion, train_data_obj, val_data_obj, num_epochs=100, log_freq=10, suppress_output=False, save_best=False
 ):
     # GLOBALS: device
 
@@ -327,19 +329,18 @@ def train(
             torch.save({"epoch": epoch, "model_state_dict": model.state_dict()}, BEST_MODEL_PATH)
             best_loss = val_loss
 
-        # Log to wandb.
-        if epoch % 10 == 0 and (ON_HPC or not suppress_output):
-            avg_train_loss = np.mean(train_losses[max(0, epoch - 10):epoch])
-            avg_val_loss = np.mean(val_losses[max(0, epoch - 10):epoch])
-
-        if ON_HPC:
-            if epoch % 10 == 0:
-                wandb.log({"train_loss": avg_train_loss, "val_loss": avg_val_loss}, step=epoch)
-        else:
+        # Log the losses to W&B.
+        if log_freq == 1:
+            avg_train_loss = train_loss
+            avg_val_loss = val_loss
             wandb.log({"train_loss": train_loss, "val_loss": val_loss})
+        elif epoch % log_freq == 0:
+            avg_train_loss = np.mean(train_losses[max(0, epoch - log_freq):epoch])
+            avg_val_loss = np.mean(val_losses[max(0, epoch - log_freq):epoch])
+            wandb.log({"train_loss": avg_train_loss, "val_loss": avg_val_loss}, step=epoch)
 
-        # Print the losses every 10 epochs.
-        if epoch % 10 == 0 and not suppress_output:
+        # Print the losses every log_freq epochs.
+        if epoch % log_freq == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
                 f"Train Loss: {avg_train_loss:.4f}, "
@@ -579,6 +580,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if config["architecture"] == "PNA":
         model_kwargs["deg"] = dataset_props["in_deg_hist"]
 
+    # Update number of epochs for fair evaluation.
+    config.update({"epochs": round(config["epochs"] / dataset_props["num_batches"])}, allow_val_change=True)
+
     # Set up the model, optimizer, and criterion.
     model = generate_model(
         config["architecture"],
@@ -618,6 +622,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         train_data_obj,
         val_data_obj,
         config["epochs"],
+        log_freq=10 if bs == "100%" else 1,
         suppress_output=suppress_output,
         save_best=save_best,
     )
@@ -727,8 +732,8 @@ if __name__ == "__main__":
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.005,
-            "batch_size": "100%",
-            "epochs": 2000,
+            "batch_size": 32,
+            "epochs": 5000,
             ## Dataset configuration
             "label_normalization": None,
             "selected_features": ["degree", "degree_centrality", "core_number", "triangles", "clustering", "close_centrality"]
