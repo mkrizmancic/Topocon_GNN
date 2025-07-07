@@ -28,7 +28,8 @@ from gnn_fiedler_approx.gnn_utils.utils import (
     create_graph_wandb,
     extract_graphs_from_batch,
     graphs_to_tuple,
-    print_dataset_splits
+    print_dataset_splits,
+    visualize_embeddings
 )
 from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer, resolve_transform
 
@@ -248,14 +249,14 @@ def training_pass(model, batch, optimizer, criterion):
     return loss
 
 
-def testing_pass(model, batch, criterion):
+def testing_pass(model, batch, criterion, epoch=-1):
     """Perform a single testing pass over the batch."""
     if SORT_DATA:
         batch = batch.sort(sort_by_row=False)
 
     with torch.no_grad():
         data = batch.to(device)
-        out = model(data.x, data.edge_index, batch=data.batch)
+        out = model(data.x, data.edge_index, batch=data.batch, epoch=epoch)
         loss = criterion(out.squeeze(dim=1), data.y)  # Compute the loss.
     return loss
 
@@ -277,17 +278,17 @@ def do_train(model, data, optimizer, criterion):
     return loss.item()
 
 
-def do_test(model, data, criterion):
+def do_test(model, data, criterion, epoch=-1):
     """Test the model on individual batches or the entire dataset."""
     model.eval()
 
     if isinstance(data, (DataLoader, list)):
         avg_loss = torch.tensor(0.0, device=device)
         for batch in data:
-            avg_loss += testing_pass(model, batch, criterion)
+            avg_loss += testing_pass(model, batch, criterion, epoch)
         loss = avg_loss / len(data)
     elif isinstance(data, Data):
-        loss = testing_pass(model, data, criterion)
+        loss = testing_pass(model, data, criterion, epoch)
     else:
         raise ValueError(f"Data must be a DataLoader or a Batch object, but got: {type(data)}.")
 
@@ -321,7 +322,7 @@ def train(
 
         # Perform one pass over the training set and then test on both sets.
         train_loss = do_train(model, train_data, optimizer, criterion)
-        val_loss = do_test(model, val_data_obj, criterion)
+        val_loss = do_test(model, val_data_obj, criterion, epoch=epoch)
 
         # Store the losses.
         train_losses[epoch - 1] = train_loss
@@ -425,7 +426,7 @@ def evaluate(
 
     # Loss on the train set.
     train_loss = do_test(model, train_data, criterion)
-    test_loss = do_test(model, test_data, criterion)
+    test_loss = do_test(model, test_data, criterion, epoch=0)
 
     # Build a detailed results DataFrame.
     with torch.no_grad():
@@ -470,6 +471,8 @@ def evaluate(
     fig_err_curve.update_xaxes(showspikes=True, tickvals=[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
     fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
+    fig_embeddings = visualize_embeddings(model.embeddings, df["True"], method="tsne")
+
     if not suppress_output:
         print(f"Evaluating model at epoch {epoch}.\n")
         print(
@@ -483,6 +486,7 @@ def evaluate(
         fig_rel_err.show()
         fig_err_vs_true.show()
         fig_err_curve.show()
+        fig_embeddings.show()
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
         print("==================")
@@ -560,6 +564,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Set up model configuration.
     model_kwargs = config.get("model_kwargs", {})
     pool_kwargs = dict()
+
+    model_kwargs["save_embeddings_freq"] = config["epochs"] // 10
 
     if config["architecture"] == "GIN":
         model_kwargs.update({"train_eps": True})
@@ -753,16 +759,16 @@ if __name__ == "__main__":
             "hidden_channels": 32,
             "gnn_layers": 5,
             "mlp_layers": 2,
-            "activation": "tanh",
+            "activation": "relu",
             "pool": "softmax",
-            "norm": "message",
+            "norm": "graph",
             "jk": "cat",
-            "dropout": 0.0,
+            "dropout": 0.05,
             ## Training configuration
             "optimizer": "adam",
-            "learning_rate": 0.005,
-            "batch_size": 32,
-            "epochs": 5000,
+            "learning_rate": 0.001219,
+            "batch_size": "100%",
+            "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
             "transform": "normalize_features",

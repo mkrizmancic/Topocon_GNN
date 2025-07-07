@@ -40,7 +40,6 @@ parameters:
   transform:
     values: [null, normalize_features]
 
-
 command:
   - ${env}
   - ${interpreter}
@@ -49,5 +48,3 @@ command:
   - "basic"
   - "--eval-target"
   - "best"
-
-

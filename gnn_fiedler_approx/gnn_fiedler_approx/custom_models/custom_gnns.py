@@ -116,6 +116,9 @@ class GNNWrapper(torch.nn.Module):
         if kwargs.get("jk") == "none":
             kwargs["jk"] = None
 
+        self.save_embeddings_freq = kwargs.pop("save_embeddings_freq", float("inf"))
+        self.embeddings = {}
+
         self.gnn = gnn_model(
             in_channels=in_channels,
             hidden_channels=hidden_channels,
@@ -140,16 +143,24 @@ class GNNWrapper(torch.nn.Module):
         self.classifier = torch.nn.Sequential(*mlp_layer_list)
         self.mlp_layers = mlp_layers
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch, epoch=-1):
         if self.pre_scaler is not None:
             x = self.pre_scaler(x)  # Pre-scaling the input features
         if self.gnn_is_mlp:
             x = self.gnn(x=x, batch=batch)
         else:
             x = self.gnn(x=x, edge_index=edge_index, batch=batch)
-        if self.pool is not None:
-            x = self.pool(x, batch)
+
+        x = self.pool(x, batch) if self.pool is not None else x
+
+        if epoch == 1 or epoch % self.save_embeddings_freq == 0:
+            if epoch not in self.embeddings:
+                self.embeddings[epoch] = x.detach().cpu()
+            else:
+                self.embeddings[epoch] = torch.cat((self.embeddings[epoch], x.detach().cpu()), dim=0)
+
         x = self.classifier(x)
+
         return x
 
     @property
