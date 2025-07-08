@@ -764,6 +764,7 @@ if __name__ == "__main__":
             "norm": "graph",
             "jk": "cat",
             "dropout": 0.05,
+            "model_kwargs": {"residual": True, "ffn": True, "pre_scaler": True},
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.001219,
