@@ -19,27 +19,6 @@ from torch_geometric.nn.resolver import normalization_resolver
 from gnn_fiedler_approx.gnn_utils.utils import count_parameters
 
 
-# TODO: Add BatchNorm
-class StupidFFN(torch.nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, act: Callable, dropout: float = 0.0, **kwargs):
-        super().__init__()
-        self.lin1 = torch.nn.Linear(in_channels, out_channels * 2)
-        self.lin2 = torch.nn.Linear(out_channels * 2, out_channels)
-        self.dropout1 = torch.nn.Dropout(dropout)
-        self.dropout2 = torch.nn.Dropout(dropout)
-        self.act = act
-
-    def reset_parameters(self):
-        r"""Resets all learnable parameters of the module."""
-        self.lin1.reset_parameters()
-        self.lin2.reset_parameters()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.dropout1(self.act(self.lin1(x)))
-        x = self.dropout2(self.lin2(x))
-        return x
-
-
 class FFN(torch.nn.Module):
     def __init__(
         self,
@@ -51,8 +30,8 @@ class FFN(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self.lin1 = torch.nn.Linear(in_channels, out_channels)
-        self.lin2 = torch.nn.Linear(out_channels, out_channels)
+        self.lin1 = torch.nn.Linear(in_channels, out_channels * 2)
+        self.lin2 = torch.nn.Linear(out_channels * 2, out_channels)
         self.act = act
 
         self.norm = None
@@ -390,6 +369,152 @@ class GNNWrapper(torch.nn.Module):
         except Exception as e:
             raise ValueError(f"Error in descriptive_name: {e}")
 
+
+class GNNPlusConv(torch.nn.Module):
+    def __init__(self, base_conv, dim_in, dim_out, act, dropout, batch_norm, residual, ffn):
+        super().__init__()
+        self.dim_in = dim_in
+        self.dim_out = dim_out
+        self.dropout = dropout
+        self.residual = residual
+        self.batch_norm = batch_norm
+        self.ffn = ffn
+
+        print(dim_in, dim_out, act, dropout, batch_norm, residual, ffn)
+
+        if self.batch_norm:
+            self.bn_node_x = torch.nn.BatchNorm1d(dim_out)
+
+        activations = {"relu": torch.nn.ReLU, "tanh": torch.nn.Tanh}
+        self.act = torch.nn.Sequential(
+            activations[act](),
+            torch.nn.Dropout(dropout)
+        )
+
+        if base_conv == "GCN":
+            self.base_conv = torchg_nn.GCNConv(dim_in, dim_out, bias=True)
+        elif base_conv == "GIN":
+            self.base_conv = torchg_nn.GINConv(torch.nn.Sequential(
+                torch.nn.Linear(dim_in, dim_out),
+                torch.nn.ReLU(),
+                torch.nn.Linear(dim_out, dim_out)
+            ))
+        elif base_conv == "GraphSAGE":
+            self.base_conv = torchg_nn.SAGEConv(dim_in, dim_out, bias=True)
+
+        if self.ffn:
+            # Feed Forward block.
+            if self.batch_norm:
+                self.norm1_local = torch.nn.BatchNorm1d(dim_out)
+            self.ff_linear1 = torch.nn.Linear(dim_out, dim_out*2)
+            self.ff_linear2 = torch.nn.Linear(dim_out*2, dim_out)
+            self.act_fn_ff = activations[act]()
+            if self.batch_norm:
+                self.norm2 = torch.nn.BatchNorm1d(dim_out)
+            self.ff_dropout1 = torch.nn.Dropout(dropout)
+            self.ff_dropout2 = torch.nn.Dropout(dropout)
+
+    def _ff_block(self, x):
+        """Feed Forward block.
+        """
+        x = self.ff_dropout1(self.act_fn_ff(self.ff_linear1(x)))
+        return self.ff_dropout2(self.ff_linear2(x))
+
+    def forward(self, x, edge_index):
+        x_in = x
+
+        x = self.base_conv(x, edge_index)
+        if self.batch_norm:
+            x = self.bn_node_x(x)
+        x = self.act(x)
+
+        if self.residual:
+            x = x_in + x  # Residual connection.
+
+        if self.ffn:
+            if self.batch_norm:
+                x = self.norm1_local(x)
+
+            x = x + self._ff_block(x)
+
+            if self.batch_norm:
+                x = self.norm2(x)
+
+        return x
+
+
+class GNNPlusWrapper(torch.nn.Module):
+    def __init__(
+        self,
+        gnn_model,
+        in_channels: int,
+        hidden_channels: int,
+        gnn_layers: int,
+        mlp_layers: int = 1,
+        pool="mean",
+        pool_kwargs={},
+        norm=None,
+        norm_kwargs=None,
+        **kwargs,
+    ):
+        super().__init__()
+        pre_scaler = kwargs.pop("pre_scaler", False)
+        residual = kwargs.get("residual", False)
+        ffn = kwargs.get("ffn", False)
+
+        if residual and not pre_scaler:
+            raise ValueError(
+                "Residual connections require 'pre_scaler=True' option to transform input features to hidden channels dimension."
+            )
+
+        self.pre_scaler = None
+        if pre_scaler:
+            # If pre-scaling is enabled, the input channels are scaled to hidden channels
+            self.pre_scaler = torch.nn.Linear(in_channels, hidden_channels)
+            in_channels = hidden_channels
+
+        if kwargs.get("jk") not in ["none", None]:
+            raise ValueError("GNNPlusWrapper does not support 'jk' option. Please use 'none' or None.")
+
+        self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
+
+        mlp_layer_list = []
+        for i in range(mlp_layers):
+            if i < mlp_layers - 1:
+                mlp_layer_list.append(torch.nn.Linear(hc, hidden_channels))
+                mlp_layer_list.append(torch.nn.ReLU())
+                hc = hidden_channels
+            else:
+                mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
+        self.classifier = torch.nn.Sequential(*mlp_layer_list)
+        self.mlp_layers = mlp_layers
+
+        if norm is None:
+            batch_norm = False
+        elif norm == "batch":
+            batch_norm = True
+        else:
+            raise ValueError(f"Unsupported normalization type: {norm}. Use 'batch' or None.")
+
+        self.convs = torch.nn.ModuleList()
+        for _ in range(gnn_layers):
+            self.convs.append(
+                GNNPlusConv(gnn_model, in_channels, hidden_channels, kwargs["act"], kwargs["dropout"],
+                            batch_norm, residual, ffn))
+            in_channels = hidden_channels
+
+    def forward(self, x, edge_index, batch, epoch=-1):
+        if self.pre_scaler is not None:
+            x = self.pre_scaler(x)
+
+        for conv in self.convs:
+            x = conv(x, edge_index)
+
+        x = self.pool(x, batch) if self.pool is not None else x
+
+        x = self.classifier(x)
+
+        return x
 
 premade_gnns = torchg_nn.models.classes
 custom_gnns = {x.__name__: x for x in []}

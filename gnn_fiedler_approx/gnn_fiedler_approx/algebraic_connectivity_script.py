@@ -22,7 +22,7 @@ from torch_geometric.loader import DataLoader
 
 from my_graphs_dataset import GraphDataset, GraphType
 from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset, inspect_graphs
-from gnn_fiedler_approx.custom_models import GNNWrapper, premade_gnns, custom_gnns
+from gnn_fiedler_approx.custom_models import GNNWrapper, GNNPlusWrapper, premade_gnns, custom_gnns
 from gnn_fiedler_approx.gnn_utils.utils import (
     create_combined_histogram,
     create_graph_wandb,
@@ -213,6 +213,14 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
     if architecture in premade_gnns:
         model = GNNWrapper(
             gnn_model=getattr(importlib.import_module("torch_geometric.nn"), architecture),
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            gnn_layers=gnn_layers,
+            **kwargs,
+        )
+    elif "+" in architecture:
+        model = GNNPlusWrapper(
+            architecture.strip("+"),
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             gnn_layers=gnn_layers,
@@ -748,16 +756,16 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GraphSAGE",
+            "architecture": "GCN+",
             "hidden_channels": 32,
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "relu",
             "pool": "softmax",
-            "norm": "graph",
-            "jk": "cat",
+            "norm": "batch",
+            "jk": "none",
             "dropout": 0.05,
-            "model_kwargs": {"residual": True, "ffn": False, "pre_scaler": True},
+            "model_kwargs": {"residual": True, "ffn": True, "pre_scaler": True},
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.001219,
@@ -765,7 +773,7 @@ if __name__ == "__main__":
             "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
-            "transform": "normalize_features",
+            "transform": None,
             "selected_features": ["degree", "degree_centrality", "core_number", "triangles", "clustering", "close_centrality"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)

@@ -1,5 +1,5 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: residuals
+name: ffn
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
@@ -7,11 +7,11 @@ metric:
 parameters:
 ## Model configuration
   architecture:
-    values: [GCN, GIN, GraphSAGE]
+    values: [GCN, GIN, GraphSAGE, GCN+, GIN+, GraphSAGE+]
   hidden_channels:
     value: 32
   gnn_layers:
-    values: [5, 15]
+    value: 5
   mlp_layers:
     value: 2
   dropout:
@@ -23,12 +23,14 @@ parameters:
   norm:
     values: [null, batch, graph]
   jk:
-    value: cat
+    values: [cat, none]
   model_kwargs:
     parameters:
       pre_scaler:
         value: true
       residual:
+        value: true
+      ffn:
         values: [true, false]
 ## Training configuration
   optimizer:
