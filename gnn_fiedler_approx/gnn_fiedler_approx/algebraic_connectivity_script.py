@@ -153,9 +153,10 @@ def load_dataset(
 
     # Perform optional transformations.
     # NOTE: From this point on, the dataset is a list of Data objects, not a Dataset object.
+    # TODO: This was not used in a long time, so it should be updated to match the addition of val dataset.
     dataset_transformer = DatasetTransformer(label_normalization)
     train_dataset, test_dataset = dataset_transformer.normalize_labels(train_dataset, test_dataset)
-    print(dataset_transformer.params)
+    print(f"Dataset transformation parameters: {dataset_transformer.params}")
     dataset_props["transformation"] = dataset_transformer
 
     # Batch and load data.
@@ -471,7 +472,6 @@ def evaluate(
     fig_err_curve.update_xaxes(showspikes=True, tickvals=[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
     fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
-    fig_embeddings = visualize_embeddings(model.embeddings, df["True"], method="tsne")
 
     if not suppress_output:
         print(f"Evaluating model at epoch {epoch}.\n")
@@ -482,6 +482,8 @@ def evaluate(
             f"Std. dev. : {err_stddev:.8f}\n\n"
             f"Error brackets: {json.dumps(good_within, indent=4)}\n"
         )
+        fig_embeddings = visualize_embeddings(model.embeddings, df["True"], method="tsne")
+
         fig_abs_err.show()
         fig_rel_err.show()
         fig_err_vs_true.show()
@@ -517,7 +519,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Tags for W&B.
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["norm_layers"]
+    tags = ["residuals"]
     if ON_HPC:
         tags.append("HPC")
     if is_best_run:
@@ -553,29 +555,17 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     else:
         BEST_MODEL_PATH /= BEST_MODEL_NAME
 
-    # TODO: It would be better to define these conditions in the config file.
-    if config["batch_size"] == "100%":
-        config.update({"learning_rate": 0.0012199, "dropout": 0.05}, allow_val_change=True)
-    elif config["batch_size"] == 32:
-        config.update({"learning_rate": 0.00045955}, allow_val_change=True)
-    elif config["batch_size"] == 256:
-        config.update({"learning_rate": 0.001036}, allow_val_change=True)
-
     # Set up model configuration.
     model_kwargs = config.get("model_kwargs", {})
     pool_kwargs = dict()
-
-    model_kwargs["save_embeddings_freq"] = config["epochs"] // 10
 
     if config["architecture"] == "GIN":
         model_kwargs.update({"train_eps": True})
     elif config["architecture"] == "GAT":
         model_kwargs.update({"v2": True})
-    # TODO: Check
-
-    bs = config.get("batch_size", BATCH_SIZE)
 
     # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
+    bs = config.get("batch_size", BATCH_SIZE)
     if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project") and bs > 0.5:
         bs = "50%"
 
@@ -590,6 +580,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         suppress_output=suppress_output,
     )
 
+    # Add the dataset config to W&B.
     wandb.config["dataset"] = dataset_config
     if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
         wandb.config["selected_features"] = features
@@ -611,9 +602,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             raise ValueError(f"Unknown normalization type: {norm}.")
         norm = norm_type
 
-    # Update number of epochs for fair evaluation.
-    if "iterations" in config:
-        config.update({"epochs": round(config["iterations"] / dataset_props["num_batches"])}, allow_val_change=True)
+    # Save intermediate embeddings for visualization if enabled.
+    if not suppress_output:
+        model_kwargs["save_embeddings_freq"] = config["epochs"] // 10
 
     # Set up the model, optimizer, and criterion.
     model = generate_model(
@@ -643,10 +634,12 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     print(f"Test baseline: {baseline_results[2]:.8f}")
     print()
 
-    wandb.watch(model, criterion, log="all", log_freq=100)
-    # torchexplorer.watch(model, backend="wandb")
+    # Update number of epochs for fair evaluation.
+    if "iterations" in config:
+        config.update({"epochs": round(config["iterations"] / dataset_props["num_batches"])}, allow_val_change=True)
 
     # Run training.
+    wandb.watch(model, criterion, log="all", log_freq=100)
     print("Training...")
     print("===========")
     train_results = train(
@@ -764,7 +757,7 @@ if __name__ == "__main__":
             "norm": "graph",
             "jk": "cat",
             "dropout": 0.05,
-            "model_kwargs": {"residual": True, "ffn": True, "pre_scaler": True},
+            "model_kwargs": {"residual": True, "ffn": False, "pre_scaler": True},
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.001219,

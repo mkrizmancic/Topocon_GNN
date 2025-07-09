@@ -1,5 +1,5 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: norm_layers
+name: residuals
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
@@ -7,38 +7,44 @@ metric:
 parameters:
 ## Model configuration
   architecture:
-    value: GraphSAGE
+    values: [GCN, GIN, GraphSAGE]
   hidden_channels:
     value: 32
   gnn_layers:
-    value: 5
+    values: [5, 15]
   mlp_layers:
     value: 2
-  # dropout:
-  #   value: 0.0
+  dropout:
+    value: 0.05
   activation:
     values: [tanh, relu]
   pool:
-    values: [softmax, max]
+    value: softmax
   norm:
-    values: [null, batch, layer_node, layer_graph, instance, graph]
+    values: [null, batch, graph]
   jk:
     value: cat
+  model_kwargs:
+    parameters:
+      pre_scaler:
+        value: true
+      residual:
+        values: [true, false]
 ## Training configuration
   optimizer:
     value: adam
-  # learning_rate:
-  #   value: 0.001
+  learning_rate:
+    value: 0.001
   batch_size:
-    values: [32, 256, "100%"]
-  iterations:
+    value: "100%"
+  epochs:
     value: 100_000
 ## Dataset configuration
   selected_features:
     values:
       - [degree, degree_centrality, core_number, triangles, clustering, close_centrality]
   transform:
-    values: [null, normalize_features]
+    value: null
 
 command:
   - ${env}

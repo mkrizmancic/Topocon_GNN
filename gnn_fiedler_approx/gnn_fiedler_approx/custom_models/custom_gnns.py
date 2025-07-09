@@ -167,9 +167,9 @@ def extended_forward(
                                     "'edge_weight' and 'edge_attr'")
 
     xs: List[Tensor] = []
-    input_x = x
     assert len(self.convs) == len(self.norms)
     for i, (conv, norm) in enumerate(zip(self.convs, self.norms)):
+        layer_input_x = x
         if not torch.jit.is_scripting() and num_sampled_nodes_per_hop is not None:
             x, edge_index, value = self._trim(
                 i,
@@ -208,7 +208,7 @@ def extended_forward(
             x = self.dropout(x)
 
             if self.residual:
-                x = x + input_x
+                x = x + layer_input_x
 
             if self.ffn:
                 x = self.ffns[i](x)
