@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import torch_geometric.utils as pygUtils
 import wandb
 from sklearn.manifold import TSNE
-from umap import UMAP
+# from umap import UMAP
 
 from .visualize import GraphVisualization
 
