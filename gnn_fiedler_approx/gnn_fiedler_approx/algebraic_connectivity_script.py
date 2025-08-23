@@ -462,6 +462,7 @@ def evaluate(
     fig_abs_err = px.histogram(df, x="Error")
     fig_rel_err = px.histogram(df, x="Error %")
     fig_err_vs_true = create_combined_histogram(df, "True", "Error %")
+    fig_err_vs_size = create_combined_histogram(df, "Nodes", "Error %")
 
     plot_df = pd.DataFrame()
     plot_df["abs(Error %)"] = np.abs(df["Error %"])
@@ -484,6 +485,7 @@ def evaluate(
         fig_abs_err.show()
         fig_rel_err.show()
         fig_err_vs_true.show()
+        fig_err_vs_size.show()
         fig_err_curve.show()
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
@@ -502,6 +504,7 @@ def evaluate(
         "fig_rel_err": fig_rel_err,
         "fig_err_curve": fig_err_curve,
         "fig_err_vs_true": fig_err_vs_true,
+        "fig_err_vs_size": fig_err_vs_size,
         "table": table,
     }
     return results
@@ -520,7 +523,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Tags for W&B.
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = [""]
+    tags = []
     if ON_HPC:
         tags.append("HPC")
     if is_best_run:
@@ -627,7 +630,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         **model_kwargs,
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
-    criterion = torch.nn.L1Loss()
+    criterion = MAPELoss()
 
     # Print baseline results.
     baseline_results = baseline(train_data_obj, val_data_obj, test_data_obj, criterion)
@@ -679,7 +682,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             epoch,
             criterion,
             train_data_obj,
-            test_data_obj or val_data_obj,
+            val_data_obj,  # TODO: return test_data_obj after experimenting
             dataset_props["transformation"],
             plot_graphs,
             plot_embeddings,
@@ -695,6 +698,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
                 "rel_err_hist": eval_results["fig_rel_err"],
                 "err_curve": eval_results["fig_err_curve"],
                 "err_vs_true_hist": eval_results["fig_err_vs_true"],
+                "err_vs_size_hist": eval_results["fig_err_vs_size"],
             }
         )
 
@@ -764,7 +768,7 @@ if __name__ == "__main__":
             "optimizer": "adam",
             "learning_rate": 0.001219,
             "batch_size": "100%",
-            "epochs": 100_000,
+            "epochs": 2000,
             ## Dataset configuration
             "label_normalization": None,
             "transform": "normalize_features",
