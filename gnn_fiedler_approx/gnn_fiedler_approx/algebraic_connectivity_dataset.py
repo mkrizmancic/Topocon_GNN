@@ -291,6 +291,27 @@ class ConnectivityDataset(InMemoryDataset):
         vectors = vectors[:, sort]
         return {node: vectors[i, :k] for i, node in enumerate(G.nodes())}
 
+    @staticmethod
+    def local_efficiency(G):
+        """
+        Returns the local efficiency of each node.
+
+        Local efficiency is defined as the average global efficiency of the
+        subgraph induced by the neighbors of the node.
+        """
+        return {node: nx.global_efficiency(G.subgraph(list(G.neighbors(node)))) for node in G.nodes()}
+
+    @staticmethod
+    def local_density(G):
+        """
+        Returns the local density of each node.
+
+        Local density is defined as the density of the subgraph induced by
+        the neighbors of the node.
+        """
+        return {node: nx.density(G.subgraph(list(G.neighbors(node)))) for node in G.nodes()}
+
+    # TODO: replace with partial functions
     feature_functions = {
         # "zero": lambda g: dict.fromkeys(g.nodes(), 0),
         # "one": lambda g: dict.fromkeys(g.nodes(), 1),
@@ -299,9 +320,11 @@ class ConnectivityDataset(InMemoryDataset):
         "weak_2_coloring": lambda g: ConnectivityDataset.weak_2_coloring(g),
         "K_cycle_count_dfs": lambda g: ConnectivityDataset.k_cycle_count_dfs(g, 4),
         "K_cycle_count_matrix": lambda g: ConnectivityDataset.k_cycle_count_matrix(g, 4),
-        "A_matrix_row": lambda g: ConnectivityDataset.A_matrix_row(g, 8),
-        "L_matrix_row": lambda g: ConnectivityDataset.L_matrix_row(g, 8),
+        "A_matrix_row": lambda g: ConnectivityDataset.A_matrix_row(g, 10),
+        "L_matrix_row": lambda g: ConnectivityDataset.L_matrix_row(g, 10),
         "k_normalized_laplacian": lambda g: ConnectivityDataset.k_normalized_laplacian(g, 3),
+        "local_efficiency": lambda g: ConnectivityDataset.local_efficiency(g),
+        "local_density": lambda g: ConnectivityDataset.local_density(g),
         "random": lambda g: nx.random_layout(g, seed=np.random), # This works because GraphDataset loader sets the seed
 
         "degree_centrality": nx.degree_centrality,
@@ -493,12 +516,12 @@ def main():
     selected_graph_sizes = {
         3: -1,
         4: -1,
-        # 5: -1,
-        # 6: -1,
-        # 7: -1,
-        # 8: -1,
-        # 9:  100000,
-        # 10: 100000
+        5: -1,
+        6: -1,
+        7: -1,
+        8: -1,
+        "09_mix_1000":  -1,
+        "10_mix_1000": -1
     }
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 

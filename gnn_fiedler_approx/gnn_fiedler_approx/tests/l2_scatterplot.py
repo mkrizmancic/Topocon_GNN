@@ -26,6 +26,7 @@ functions = {
     'average_clustering': nx.average_clustering,
     'node_connectivity': nx.node_connectivity,
     'edge_connectivity': nx.edge_connectivity,
+    'density': nx.density,
     'girth': nx.girth,
     'diameter': nx.diameter,
     'radius': nx.radius,

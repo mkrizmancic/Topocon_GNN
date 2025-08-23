@@ -419,7 +419,7 @@ def baseline(train_data, val_data, test_data, criterion):
 
 
 def evaluate(
-    model, epoch, criterion, train_data, test_data, dst, plot_graphs=False, make_table=False, suppress_output=False
+    model, epoch, criterion, train_data, test_data, dst, plot_graphs=False, plot_embeddings=False, make_table=False, suppress_output=False
 ):
     model.eval()
     df = pd.DataFrame()
@@ -471,7 +471,6 @@ def evaluate(
     fig_err_curve.update_xaxes(showspikes=True, tickvals=[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
     fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
-    fig_embeddings = visualize_embeddings(model.embeddings, df["True"], method="tsne")
 
     if not suppress_output:
         print(f"Evaluating model at epoch {epoch}.\n")
@@ -486,11 +485,14 @@ def evaluate(
         fig_rel_err.show()
         fig_err_vs_true.show()
         fig_err_curve.show()
-        fig_embeddings.show()
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
         print("==================")
         print(df)
+
+        if plot_embeddings:
+            fig_embeddings = visualize_embeddings(model.embeddings, df["True"], method="tsne")
+            fig_embeddings.show()
 
     results = {
         "mean_err": err_mean,
@@ -513,11 +515,12 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     save_best = eval_target == EvalTarget.BEST
     plot_graphs = eval_type == EvalType.FULL
     make_table = eval_type.value > EvalType.BASIC.value
+    plot_embeddings = eval_type.value > EvalType.BASIC.value
     suppress_output = is_sweep or ON_HPC
 
     # Tags for W&B.
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["norm_layers"]
+    tags = [""]
     if ON_HPC:
         tags.append("HPC")
     if is_best_run:
@@ -531,17 +534,12 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         6: -1,
         7: -1,
         8: -1,
-        # 9:  10000,
-        # 10: 10000
+        "09_mix_1000":  -1,
+        "10_mix_1000": -1
     }
 
-    # PNA dataset
-    # selected_graph_sizes = {
-    #     GraphType.RANDOM_MIX: (640, range(15, 25))
-    # }
-
     # Set up the run
-    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
+    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v3", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
@@ -553,25 +551,17 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     else:
         BEST_MODEL_PATH /= BEST_MODEL_NAME
 
-    # TODO: It would be better to define these conditions in the config file.
-    if config["batch_size"] == "100%":
-        config.update({"learning_rate": 0.0012199, "dropout": 0.05}, allow_val_change=True)
-    elif config["batch_size"] == 32:
-        config.update({"learning_rate": 0.00045955}, allow_val_change=True)
-    elif config["batch_size"] == 256:
-        config.update({"learning_rate": 0.001036}, allow_val_change=True)
-
     # Set up model configuration.
     model_kwargs = config.get("model_kwargs", {})
     pool_kwargs = dict()
 
-    model_kwargs["save_embeddings_freq"] = config["epochs"] // 10
+    if plot_embeddings:
+        model_kwargs["save_embeddings_freq"] = config["epochs"] // 10
 
     if config["architecture"] == "GIN":
         model_kwargs.update({"train_eps": True})
     elif config["architecture"] == "GAT":
         model_kwargs.update({"v2": True})
-    # TODO: Check
 
     bs = config.get("batch_size", BATCH_SIZE)
 
@@ -580,6 +570,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         bs = "50%"
 
     # Load the dataset.
+    if sfi := config.get("selected_features_id") is not None:
+        assert "available_features" in config, "Available features must be provided for selected_features_id."
+        indicators = [int(bit) for bit in f"{sfi:0{len(config['available_features'])}b}"]
+        config["selected_features"] = [feat for feat, ind in zip(config["available_features"], indicators) if ind]
+
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_graph_sizes,
         selected_features=config.get("selected_features", None),
@@ -687,6 +682,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             test_data_obj or val_data_obj,
             dataset_props["transformation"],
             plot_graphs,
+            plot_embeddings,
             make_table,
             suppress_output=suppress_output
         )
@@ -768,7 +764,7 @@ if __name__ == "__main__":
             "optimizer": "adam",
             "learning_rate": 0.001219,
             "batch_size": "100%",
-            "epochs": 2000,
+            "epochs": 100_000,
             ## Dataset configuration
             "label_normalization": None,
             "transform": "normalize_features",
