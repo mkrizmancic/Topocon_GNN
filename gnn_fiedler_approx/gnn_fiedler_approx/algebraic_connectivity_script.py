@@ -6,7 +6,6 @@ import json
 import math
 import os
 import pathlib
-import random
 from typing import Union
 
 import codetiming
@@ -19,6 +18,7 @@ import torch
 import wandb
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
+from torch_geometric.seed import seed_everything
 
 from my_graphs_dataset import GraphDataset, GraphType
 from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset, inspect_graphs
@@ -124,11 +124,13 @@ def load_dataset(
     dynamic_features = dataset.dynamic_features
 
     # Shuffle and split the dataset.
+    # Sometimes we need true randomness in training but want to keep the splits
+    # consistent, so we must protect the RNG state.
     # TODO: Splitting after shuffle gives relatively balanced splits between the graph sizes, but it's not perfect.
-    random.seed(seed)
-    np.random.seed(seed)
+    random_state = torch.get_rng_state()
     torch.manual_seed(seed)
     dataset = dataset.shuffle()
+    torch.set_rng_state(random_state)
 
     # Flexible dataset splitting. Can be split to train/test or train/val/test.
     if isinstance(dataset_config["split"], tuple):
@@ -513,6 +515,8 @@ def evaluate(
 def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_wandb=False, is_best_run=False):
     # GLOBALS: device
 
+    seed_everything(42)
+
     # Helper boolean flags.
     is_sweep = config is None
     save_best = eval_target == EvalTarget.BEST
@@ -584,7 +588,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         label_normalization=config.get("label_normalization"),
         transform=config.get("transform"),
         batch_size=bs,
-        split=config.get("dataset", {}).get("split", 0.8),
+        split=config.get("dataset", {}).get("split", (0.6, 0.2)),
         suppress_output=suppress_output,
     )
 
