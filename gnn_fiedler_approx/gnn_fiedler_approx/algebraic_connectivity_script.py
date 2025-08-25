@@ -15,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 import torch
+import yaml
 import wandb
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -82,7 +83,7 @@ class MAPELoss(torch.nn.Module):
 # *************** DATASET ***************
 # ***************************************
 def load_dataset(
-    selected_graph_sizes,
+    selected_graph_sizes=None,
     selected_features=None,
     label_normalization=None,
     transform=None,
@@ -91,6 +92,19 @@ def load_dataset(
     seed=42,
     suppress_output=False,
 ):
+    # Default graph sizes.
+    if selected_graph_sizes is None:
+        selected_graph_sizes = {
+            3: -1,
+            4: -1,
+            5: -1,
+            6: -1,
+            7: -1,
+            8: -1,
+            "09_mix_1000":  -1,
+            "10_mix_1000": -1
+        }
+
     # Save dataset configuration.
     dataset_config = {
         "name": "ConnectivityDataset",
@@ -235,6 +249,18 @@ def generate_optimizer(model, optimizer, lr, **kwargs):
         return torch.optim.SGD(model.parameters(), lr=lr, **kwargs)
     else:
         raise ValueError("Only Adam optimizer is currently supported.")
+
+
+def generate_loss_function(loss_name):
+    """Generate loss function based on the loss name."""
+    if loss_name == "MAE":
+        return torch.nn.L1Loss()
+    elif loss_name == "MSE":
+        return torch.nn.MSELoss()
+    elif loss_name == "MAPE":
+        return MAPELoss()
+    else:
+        raise ValueError(f"Unknown loss function: {loss_name}")
 
 
 def training_pass(model, batch, optimizer, criterion):
@@ -533,18 +559,6 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_best_run:
         tags.append("BEST")
 
-    # Set up dataset.
-    selected_graph_sizes = {
-        3: -1,
-        4: -1,
-        5: -1,
-        6: -1,
-        7: -1,
-        8: -1,
-        "09_mix_1000":  -1,
-        "10_mix_1000": -1
-    }
-
     # Set up the run
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v3", tags=tags, config=config)
     config = wandb.config
@@ -576,11 +590,14 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project") and bs > 0.5:
         bs = "50%"
 
-    # Load the dataset.
+    # Load the dataset. Parse selected features and graph sizes.
     if sfi := config.get("selected_features_id") is not None:
         assert "available_features" in config, "Available features must be provided for selected_features_id."
         indicators = [int(bit) for bit in f"{sfi:0{len(config['available_features'])}b}"]
         config["selected_features"] = [feat for feat, ind in zip(config["available_features"], indicators) if ind]
+
+    sgs = config.get("dataset", {}).get("selected_graphs", None)
+    selected_graph_sizes = yaml.safe_load(sgs) if sgs is not None else None
 
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_graph_sizes,
@@ -592,7 +609,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         suppress_output=suppress_output,
     )
 
-    wandb.config["dataset"] = dataset_config
+    config.update({"dataset": dataset_config}, allow_val_change=True)
     if "selected_features" not in wandb.config or not wandb.config["selected_features"]:
         wandb.config["selected_features"] = features
 
@@ -634,7 +651,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         **model_kwargs,
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
-    criterion = MAPELoss()
+    criterion = generate_loss_function(config["loss"])
 
     # Print baseline results.
     baseline_results = baseline(train_data_obj, val_data_obj, test_data_obj, criterion)
@@ -770,6 +787,7 @@ if __name__ == "__main__":
             "dropout": 0.05,
             ## Training configuration
             "optimizer": "adam",
+            "loss": "MAE",
             "learning_rate": 0.001219,
             "batch_size": "100%",
             "epochs": 2000,
