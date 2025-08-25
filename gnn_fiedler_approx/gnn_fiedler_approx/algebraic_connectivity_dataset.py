@@ -297,9 +297,9 @@ class ConnectivityDataset(InMemoryDataset):
         Returns the local efficiency of each node.
 
         Local efficiency is defined as the average global efficiency of the
-        subgraph induced by the neighbors of the node.
+        subgraph induced by the neighbors of the node (without the node itself).
         """
-        return {node: nx.global_efficiency(G.subgraph(list(G.neighbors(node)))) for node in G.nodes()}
+        return {node: nx.global_efficiency(G.subgraph(G[node])) for node in G.nodes()}
 
     @staticmethod
     def local_density(G):
@@ -307,9 +307,9 @@ class ConnectivityDataset(InMemoryDataset):
         Returns the local density of each node.
 
         Local density is defined as the density of the subgraph induced by
-        the neighbors of the node.
+        the node and its neighbors (my, non-standard definition).
         """
-        return {node: nx.density(G.subgraph(list(G.neighbors(node)))) for node in G.nodes()}
+        return {node: nx.density(G.subgraph(list(G.neighbors(node)) + [node])) for node in G.nodes()}
 
     # TODO: replace with partial functions
     feature_functions = {
