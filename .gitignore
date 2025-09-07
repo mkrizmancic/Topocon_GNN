@@ -196,3 +196,5 @@ pyrightconfig.json
 
 *.pickle
 gnn_fiedler_approx (Supek)/
+automl_fiedler_approx
+gnn_link_prediction

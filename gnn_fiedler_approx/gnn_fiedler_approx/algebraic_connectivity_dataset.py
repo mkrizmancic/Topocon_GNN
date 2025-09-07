@@ -486,8 +486,8 @@ def inspect_graphs(dataset, graphs:int | list=1):
         graphs = random.sample(range(len(dataset)), graphs)
 
     for i in graphs:
-    # for i in random.sample(range(len(dataset)), num_graphs):
         data = dataset[i]  # Get a random graph object
+        G = tg_utils.to_networkx(data, to_undirected=True)
 
         print()
         header = f"{i} - {data}"
@@ -495,6 +495,7 @@ def inspect_graphs(dataset, graphs:int | list=1):
         print("=" * len(header))
 
         # Gather some statistics about the graph.
+        print(f"Graph ID: {GraphDataset.to_graph6(G)}")
         print(f"Number of nodes: {data.num_nodes}")
         print(f"Number of edges: {data.num_edges}")
         print(f"{y_name}: {data.y.item():.5f}")
@@ -506,7 +507,7 @@ def inspect_graphs(dataset, graphs:int | list=1):
         print("=" * len(header))
         print()
 
-        G = tg_utils.to_networkx(data, to_undirected=True)
+
         nx.draw(G, with_labels=True)
         plt.show()
 
@@ -520,16 +521,16 @@ def main():
         6: -1,
         7: -1,
         8: -1,
-        "09_mix_1000":  -1,
-        "10_mix_1000": -1
+        # "09_mix_1000":  -1,
+        # "10_mix_1000": -1
     }
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
-        dataset = ConnectivityDataset(root, loader, selected_features=["degree"], force_reload=True)
+        dataset = ConnectivityDataset(root, loader, selected_features=["degree", "degree_centrality", "triangles", "clustering", "local_density"], force_reload=False)
 
     inspect_dataset(dataset)
-    inspect_graphs(dataset, graphs=[1])
+    inspect_graphs(dataset, graphs=[3])
 
 
 

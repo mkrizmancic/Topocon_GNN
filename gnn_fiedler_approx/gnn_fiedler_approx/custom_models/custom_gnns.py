@@ -1,58 +1,22 @@
+import importlib
 import torch
 import torch_geometric.nn as torchg_nn
 import torch_geometric.nn.aggr as torchg_aggr
-from torch_geometric.nn import Sequential, GCNConv
-from torch_geometric.nn import (
-    MLP,
-    global_add_pool,
-    global_max_pool,
-    global_mean_pool,
-)
 from gnn_fiedler_approx.gnn_utils.utils import count_parameters
-
-
-# FIXME: Activation function is missing
-class MyGCN(torch.nn.Module):
-    def __init__(self, input_channels, mp_layers):
-        super(MyGCN, self).__init__()
-
-        # Message-passing layers - GCNConv
-        layers = []
-        for i, layer_size in enumerate(mp_layers):
-            if i == 0:
-                layers.append((GCNConv(input_channels, layer_size), "x, edge_index -> x"))
-            else:
-                layers.append((GCNConv(mp_layers[i - 1], layer_size), "x, edge_index -> x"))
-            layers.append(torch.nn.ReLU())
-        self.mp_layers = Sequential("x, edge_index", layers)
-
-        # Final readout layer
-        self.lin = torch.nn.Linear(mp_layers[-1], 1)
-
-    def forward(self, x, edge_index, batch):
-        # 1. Obtain node embeddings
-        x = self.mp_layers(x, edge_index)
-
-        # 2. Readout layer
-        x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
-
-        # 3. Apply a final classifier
-        x = self.lin(x)
-
-        return x
 
 
 def get_global_pooling(name, **kwargs):
     options = {
-        "mean": global_mean_pool,
-        "max": global_max_pool,
-        "add": global_add_pool,
+        "mean": torchg_aggr.MeanAggregation(),
+        "max": torchg_aggr.MaxAggregation(),
+        "add": torchg_aggr.SumAggregation(),
         "min": torchg_aggr.MinAggregation(),
         "median": torchg_aggr.MedianAggregation(),
         "var": torchg_aggr.VarAggregation(),
         "std": torchg_aggr.StdAggregation(),
         "softmax": torchg_aggr.SoftmaxAggregation(learn=True),
         "s2s": torchg_aggr.Set2Set,
+        "minmax": torchg_aggr.MultiAggregation(aggrs=["min", "max"]),
         "multi": torchg_aggr.MultiAggregation(aggrs=["min", "max", "mean", "std"]),
         "multi++": torchg_aggr.MultiAggregation,
         "PNA": torchg_aggr.DegreeScalerAggregation,
@@ -75,7 +39,7 @@ def get_global_pooling(name, **kwargs):
             aggr=["mean", "min", "max", "std"], scaler=["identity", "amplification", "attenuation"], deg=kwargs["deg"]
         )
         hc = len(pool.aggr.aggrs) * len(pool.scaler) * hc
-    elif name == "multi":
+    elif name in ["multi", "minmax"]:
         hc = len(pool.aggrs) * hc
     elif name == "multi++":
         pool = pool(
@@ -93,55 +57,64 @@ def get_global_pooling(name, **kwargs):
 class GNNWrapper(torch.nn.Module):
     def __init__(
         self,
-        gnn_model,
+        architecture: str,
         in_channels: int,
         hidden_channels: int,
         gnn_layers: int,
-        mlp_layers: int = 1,
-        pool="mean",
-        pool_kwargs={},
-        norm=None,
-        norm_kwargs=None,
         **kwargs,
     ):
         super().__init__()
-        self.pre_scaler = torch.nn.Linear(in_channels, hidden_channels)
 
+        # Store args and kwargs used to initialize the model.
+        self.config = {"architecture": architecture,
+                       "in_channels": in_channels,
+                       "hidden_channels": hidden_channels,
+                       "gnn_layers": gnn_layers,
+                       }
+        self.config.update(kwargs)
+
+        # Sanitize and load kwargs.
+        if kwargs.get("jk") == "none":
+            kwargs["jk"] = None
+
+        self.mlp_layers = kwargs.pop("mlp_layers", 1)
+        pool = kwargs.pop("pool", "mean")
+        pool_kwargs = kwargs.pop("pool_kwargs", {})
+
+        self.save_embeddings_freq = kwargs.pop("save_embeddings_freq", float("inf"))
+        self.embeddings = {}
+
+        # Build the model: 1) pre-scaler, 2) GNN, 3) pooling, 4) final regression predictor
         self.pre_scaler = None
         if kwargs.pop("pre_scaler", False):
             # If pre-scaling is enabled, the input channels are scaled to hidden channels
             self.pre_scaler = torch.nn.Linear(in_channels, hidden_channels)
             in_channels = hidden_channels
 
-        if kwargs.get("jk") == "none":
-            kwargs["jk"] = None
-
-        self.save_embeddings_freq = kwargs.pop("save_embeddings_freq", float("inf"))
-        self.embeddings = {}
-
+        gnn_model = getattr(importlib.import_module("torch_geometric.nn"), architecture)
         self.gnn = gnn_model(
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             out_channels=hidden_channels,
             num_layers=gnn_layers,
-            norm=norm,
-            norm_kwargs=norm_kwargs,
             **kwargs,
         )
-        self.gnn_is_mlp = isinstance(self.gnn, MLP)
 
         self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
 
         mlp_layer_list = []
-        for i in range(mlp_layers):
-            if i < mlp_layers - 1:
+        for i in range(self.mlp_layers):
+            if i < self.mlp_layers - 1:
                 mlp_layer_list.append(torch.nn.Linear(hc, hidden_channels))
                 mlp_layer_list.append(torch.nn.ReLU())
                 hc = hidden_channels
             else:
                 mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
-        self.classifier = torch.nn.Sequential(*mlp_layer_list)
-        self.mlp_layers = mlp_layers
+        self.predictor = torch.nn.Sequential(*mlp_layer_list)
+
+        # Store other class variables.
+        self.gnn_is_mlp = architecture == "MLP"
+
 
     def forward(self, x, edge_index, batch, epoch=-1):
         if self.pre_scaler is not None:
@@ -159,7 +132,7 @@ class GNNWrapper(torch.nn.Module):
             else:
                 self.embeddings[epoch] = torch.cat((self.embeddings[epoch], x.detach().cpu()), dim=0)
 
-        x = self.classifier(x)
+        x = self.predictor(x)
 
         return x
 
@@ -197,6 +170,20 @@ class GNNWrapper(torch.nn.Module):
         except Exception as e:
             raise ValueError(f"Error in descriptive_name: {e}")
 
+    def save(self, path):
+        model_dict = {
+            "config": self.config,
+            "model": self.state_dict(),
+        }
+        torch.save(model_dict, path)
+
+    @classmethod
+    def load(cls, path):
+        model_dict = torch.load(path)
+        model = cls(**model_dict["config"])
+        model.load_state_dict(model_dict["model"])
+        return model
+
 
 premade_gnns = torchg_nn.models.classes
-custom_gnns = {x.__name__: x for x in [MyGCN]}
+custom_gnns = {}

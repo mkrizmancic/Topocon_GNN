@@ -227,7 +227,7 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
     # GLOBALS: device, premade_gnns, custom_gnns
     if architecture in premade_gnns:
         model = GNNWrapper(
-            gnn_model=getattr(importlib.import_module("torch_geometric.nn"), architecture),
+            architecture=architecture,
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             gnn_layers=gnn_layers,
@@ -733,6 +733,10 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)
 
+        # Save the full final model with all arguments, but only when running outside of sweeps.
+        if not is_sweep:
+            model.save(BEST_MODEL_PATH.parent / "full_model.pth")
+
     print(f"Duration: {train_results['duration']:.8f} s.")
     if is_sweep:
         print("    ...DONE.")
@@ -780,21 +784,24 @@ if __name__ == "__main__":
             "hidden_channels": 32,
             "gnn_layers": 5,
             "mlp_layers": 2,
-            "activation": "relu",
-            "pool": "softmax",
+            "activation": "tanh",
+            "pool": "minmax",
             "norm": "graph",
             "jk": "cat",
             "dropout": 0.05,
             ## Training configuration
             "optimizer": "adam",
-            "loss": "MAE",
-            "learning_rate": 0.001219,
+            "loss": "MAPE",
+            "learning_rate": 0.002,
             "batch_size": "100%",
-            "epochs": 2000,
+            "epochs": 5000,
             ## Dataset configuration
             "label_normalization": None,
-            "transform": "normalize_features",
-            "selected_features": ["degree", "degree_centrality", "core_number", "triangles", "clustering", "close_centrality"]
+            "transform": None,
+            "selected_features": ["degree", "degree_centrality", "triangles", "clustering", "local_density"],
+            "dataset": {
+                "selected_graphs": "{3: -1, 4: -1, 5: -1, 6: -1, 7: -1, 8: -1}",
+            },
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()
