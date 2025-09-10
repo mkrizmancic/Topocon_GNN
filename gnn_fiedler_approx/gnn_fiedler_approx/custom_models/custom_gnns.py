@@ -178,10 +178,11 @@ class GNNWrapper(torch.nn.Module):
         torch.save(model_dict, path)
 
     @classmethod
-    def load(cls, path):
-        model_dict = torch.load(path)
+    def load(cls, path, device):
+        model_dict = torch.load(path, map_location=device)
         model = cls(**model_dict["config"])
         model.load_state_dict(model_dict["model"])
+        model.to(device)
         return model
 
 

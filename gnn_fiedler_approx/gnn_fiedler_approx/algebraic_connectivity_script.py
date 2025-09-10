@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import enum
-import importlib
 import json
 import math
 import os
@@ -171,7 +170,7 @@ def load_dataset(
     # NOTE: From this point on, the dataset is a list of Data objects, not a Dataset object.
     dataset_transformer = DatasetTransformer(label_normalization)
     train_dataset, test_dataset = dataset_transformer.normalize_labels(train_dataset, test_dataset)
-    print(dataset_transformer.params)
+    print(f"\n Dataset transformation parameters: {dataset_transformer.params}\n")
     dataset_props["transformation"] = dataset_transformer
 
     # Batch and load data.
@@ -396,7 +395,7 @@ def plot_training_curves(num_epochs, train_losses, test_losses, criterion):
     fig.show()
 
 
-def eval_batch(model, batch, plot_graphs=False):
+def eval_batch(model, batch, plot_graphs_wandb=False):
     if SORT_DATA:
         batch = batch.sort(sort_by_row=False)
 
@@ -413,7 +412,7 @@ def eval_batch(model, batch, plot_graphs=False):
     # FIXME: This is the only way to parallelize in Jupyter but runs out of memory.
     # with concurrent.futures.ProcessPoolExecutor(4) as executor:
     #     graph_visuals = executor.map(create_graph_wandb, nx_graphs, chunksize=10)
-    if plot_graphs:
+    if plot_graphs_wandb:
         graph_visuals = [create_graph_wandb(g) for g in nx_graphs]
     else:
         graph_visuals = ["N/A"] * len(nx_graphs)
@@ -447,7 +446,7 @@ def baseline(train_data, val_data, test_data, criterion):
 
 
 def evaluate(
-    model, epoch, criterion, train_data, test_data, dst, plot_graphs=False, plot_embeddings=False, make_table=False, suppress_output=False
+    model, epoch, criterion, train_data, test_data, dst, title="", plot_graphs_wandb=False, plot_embeddings=False, make_table_wandb=False, suppress_output=False
 ):
     model.eval()
     df = pd.DataFrame()
@@ -458,11 +457,11 @@ def evaluate(
 
     # Build a detailed results DataFrame.
     with torch.no_grad():
-        if isinstance(test_data, DataLoader):
+        if isinstance(test_data, (DataLoader, list)):
             for batch in test_data:
-                df = pd.concat([df, eval_batch(model, batch, plot_graphs)])
+                df = pd.concat([df, eval_batch(model, batch, plot_graphs_wandb)])
         elif isinstance(test_data, Data):
-            df = eval_batch(model, test_data, plot_graphs)
+            df = eval_batch(model, test_data, plot_graphs_wandb)
         else:
             raise ValueError("Data must be a DataLoader or a Batch object.")
 
@@ -484,19 +483,19 @@ def evaluate(
     }
 
     # Create a W&B table.
-    table = wandb.Table(dataframe=df) if make_table else None
+    table = wandb.Table(dataframe=df) if make_table_wandb else df
 
     # Print and plot.
-    fig_abs_err = px.histogram(df, x="Error")
-    fig_rel_err = px.histogram(df, x="Error %")
-    fig_err_vs_true = create_combined_histogram(df, "True", "Error %")
-    fig_err_vs_size = create_combined_histogram(df, "Nodes", "Error %")
+    fig_abs_err = px.histogram(df, x="Error", title=title)
+    fig_rel_err = px.histogram(df, x="Error %", title=title)
+    fig_err_vs_true = create_combined_histogram(df, "True", "Error %", title=title)
+    fig_err_vs_size = create_combined_histogram(df, "Nodes", "Error %", title=title)
 
     plot_df = pd.DataFrame()
     plot_df["abs(Error %)"] = np.abs(df["Error %"])
     plot_df.sort_values(by="abs(Error %)", inplace=True)
     plot_df.reset_index(drop=True, inplace=True)
-    fig_err_curve = px.line(plot_df, x="abs(Error %)", y=(plot_df.index + 1) / len(plot_df) * 100, title="Error curve")
+    fig_err_curve = px.line(plot_df, x="abs(Error %)", y=(plot_df.index + 1) / len(plot_df) * 100, title=title)
     fig_err_curve.update_xaxes(showspikes=True, tickvals=[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
     fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
@@ -546,8 +545,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Helper boolean flags.
     is_sweep = config is None
     save_best = eval_target == EvalTarget.BEST
-    plot_graphs = eval_type == EvalType.FULL
-    make_table = eval_type.value > EvalType.BASIC.value
+    plot_graphs_wandb = eval_type == EvalType.FULL
+    make_table_wandb = eval_type.value > EvalType.BASIC.value
     plot_embeddings = eval_type.value > EvalType.BASIC.value
     suppress_output = is_sweep or ON_HPC
 
@@ -705,9 +704,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             train_data_obj,
             val_data_obj,  # TODO: return test_data_obj after experimenting
             dataset_props["transformation"],
-            plot_graphs,
-            plot_embeddings,
-            make_table,
+            plot_graphs_wandb=plot_graphs_wandb,
+            plot_embeddings=plot_embeddings,
+            make_table_wandb=make_table_wandb,
             suppress_output=suppress_output
         )
         run.summary["mean_err"] = eval_results["mean_err"]
@@ -723,7 +722,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             }
         )
 
-        if eval_type.value > EvalType.BASIC.value:
+        if make_table_wandb:
             run.log({"results_table": eval_results["table"]})
 
         if is_best_run:
@@ -735,7 +734,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
         # Save the full final model with all arguments, but only when running outside of sweeps.
         if not is_sweep:
-            model.save(BEST_MODEL_PATH.parent / "full_model.pth")
+            model.save(BEST_MODEL_PATH.parent / pathlib.Path(BEST_MODEL_PATH.stem + "_full.pth"))
 
     print(f"Duration: {train_results['duration']:.8f} s.")
     if is_sweep:
@@ -781,27 +780,27 @@ if __name__ == "__main__":
         global_config = {
             ## Model configuration
             "architecture": "GraphSAGE",
-            "hidden_channels": 32,
+            "hidden_channels": 64,
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "minmax",
+            "pool": "s2s",
             "norm": "graph",
             "jk": "cat",
-            "dropout": 0.05,
+            "dropout": 0.09,
             ## Training configuration
             "optimizer": "adam",
             "loss": "MAPE",
-            "learning_rate": 0.002,
+            "learning_rate": 0.002434,
             "batch_size": "100%",
-            "epochs": 5000,
+            "epochs": 100,
             ## Dataset configuration
             "label_normalization": None,
-            "transform": None,
+            "transform": "normalize_features",
             "selected_features": ["degree", "degree_centrality", "triangles", "clustering", "local_density"],
-            "dataset": {
-                "selected_graphs": "{3: -1, 4: -1, 5: -1, 6: -1, 7: -1, 8: -1}",
-            },
+            # "dataset": {
+            #     "selected_graphs": "{3: -1, 4: -1, 5: -1, 6: -1, 7: -1, 8: -1}",
+            # },
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()

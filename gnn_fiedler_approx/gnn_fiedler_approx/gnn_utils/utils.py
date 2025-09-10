@@ -107,7 +107,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def create_combined_histogram(df, bars, line, option="boxplot"):
+def create_combined_histogram(df, bars, line, option="boxplot", title=""):
     """
     Create a chart for visualizing the distribution of a metric across a dataset labels.
 
@@ -232,6 +232,7 @@ def create_combined_histogram(df, bars, line, option="boxplot"):
 
         # Update layout for the plot
         fig.update_layout(
+            title=title,
             xaxis_title=f"{bars} Value",
             yaxis_title="Count",
             yaxis2=dict(
