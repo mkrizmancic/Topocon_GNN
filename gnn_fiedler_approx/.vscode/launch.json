@@ -18,7 +18,8 @@
                 "--standalone",
                 "--eval-type", "basic",
                 "--eval-target", "best",
-                "--no-wandb"
+                "--no-wandb",
+                "--best"
             ]
         },
         {

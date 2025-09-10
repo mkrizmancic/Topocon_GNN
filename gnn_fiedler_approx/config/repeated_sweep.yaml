@@ -1,0 +1,54 @@
+program: gnn_fiedler_approx/algebraic_connectivity_script.py
+name: norm_layers
+method: grid  # Bayesian works for small number of continuous parameters.
+metric:
+  goal: minimize
+  name: val_loss
+parameters:
+## Model configuration
+  architecture:
+    value: GraphSAGE
+  hidden_channels:
+    value: 64
+  gnn_layers:
+    value: 5
+  mlp_layers:
+    value: 2
+  dropout:
+    value: 0.09
+  activation:
+    value: tanh
+  pool:
+    value: s2s
+  norm:
+    value: graph
+  jk:
+    value: cat
+## Training configuration
+  optimizer:
+    value: adam
+  loss:
+    value: MAPE
+  learning_rate:
+    value: 0.002434
+  batch_size:
+    value: "100%"
+  iterations:
+    value: 50000
+  seed:
+    values: [42, 2, 7, 21, 35, 100, 123, 99, 11, 3, 8, 27, 88, 54, 65, 5, 19, 787, 941, 4321]
+## Dataset configuration
+  selected_features:
+    values:
+      - [degree, degree_centrality, core_number, triangles, clustering, close_centrality]
+  transform:
+    value: normalize_features
+
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--eval-type"
+  - "basic"
+  - "--eval-target"
+  - "best"

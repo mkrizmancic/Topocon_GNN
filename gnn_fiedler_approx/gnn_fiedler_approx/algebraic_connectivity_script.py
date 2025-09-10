@@ -526,6 +526,8 @@ def evaluate(
     results = {
         "mean_err": err_mean,
         "stddev_err": err_stddev,
+        "eval_train_loss": train_loss,
+        "eval_test_loss": test_loss,
         "good_within": good_within,
         "fig_abs_err": fig_abs_err,
         "fig_rel_err": fig_rel_err,
@@ -540,7 +542,6 @@ def evaluate(
 def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_wandb=False, is_best_run=False):
     # GLOBALS: device
 
-    seed_everything(42)
 
     # Helper boolean flags.
     is_sweep = config is None
@@ -563,6 +564,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
+
+    seed_everything(config.get("seed", 42) if config else 42)
 
     if ON_HPC:
         # We are on the HPC - paralel runs use the same disk.
@@ -702,7 +705,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             epoch,
             criterion,
             train_data_obj,
-            val_data_obj,  # TODO: return test_data_obj after experimenting
+            test_data_obj,
             dataset_props["transformation"],
             plot_graphs_wandb=plot_graphs_wandb,
             plot_embeddings=plot_embeddings,
@@ -712,6 +715,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         run.summary["mean_err"] = eval_results["mean_err"]
         run.summary["stddev_err"] = eval_results["stddev_err"]
         run.summary["good_within"] = eval_results["good_within"]
+        run.summary["eval_train_loss"] = eval_results["eval_train_loss"]
+        run.summary["eval_test_loss"] = eval_results["eval_test_loss"]
         run.log(
             {
                 "abs_err_hist": eval_results["fig_abs_err"],
@@ -793,7 +798,8 @@ if __name__ == "__main__":
             "loss": "MAPE",
             "learning_rate": 0.002434,
             "batch_size": "100%",
-            "epochs": 100,
+            "epochs": 10,
+            "seed": 42,
             ## Dataset configuration
             "label_normalization": None,
             "transform": "normalize_features",
