@@ -33,8 +33,6 @@ from gnn_fiedler_approx.gnn_utils.utils import (
 )
 from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer, resolve_transform
 
-pio.renderers.default = "browser"  # Use browser for Plotly visualizations.
-
 
 # GLOBAL VARIABLES
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
@@ -146,7 +144,7 @@ def load_dataset(
     torch.set_rng_state(random_state)
 
     # Flexible dataset splitting. Can be split to train/test or train/val/test.
-    if isinstance(dataset_config["split"], tuple):
+    if isinstance(dataset_config["split"], (tuple, list)):
         train_size, val_size = dataset_config["split"]
         train_size = round(train_size * len(dataset))
         val_size = round(val_size * len(dataset))
@@ -751,6 +749,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
 
 if __name__ == "__main__":
+    pio.renderers.default = "browser"
+
     args = argparse.ArgumentParser(description="Train a GNN model to predict the algebraic connectivity of graphs.")
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
     # These are the options for model performance evaluation.
