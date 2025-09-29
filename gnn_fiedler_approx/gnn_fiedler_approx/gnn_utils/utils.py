@@ -107,7 +107,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def create_combined_histogram(df, bars, line, option="boxplot", title=""):
+def create_combined_histogram(df, bars, line, option="boxplot", title="", xlabel=None):
     """
     Create a chart for visualizing the distribution of a metric across a dataset labels.
 
@@ -119,6 +119,9 @@ def create_combined_histogram(df, bars, line, option="boxplot", title=""):
     if max_val == 1:
         nbins = 51
         rangebins = (-0.01, max_val + 0.01)
+    elif bars == "Nodes":
+        nbins = max_val
+        rangebins = (0.5, max_val + 0.5)
     else:
         nbins = int(df[bars].max() * 5) + 1
         rangebins = (-0.1, df[bars].max() + 0.1)
@@ -136,15 +139,16 @@ def create_combined_histogram(df, bars, line, option="boxplot", title=""):
     std_per_bin = stats['std']
 
     fig = go.Figure()
+    xlabel = bars if xlabel is None else xlabel
 
     # Add histogram (count)
     fig.add_trace(
         go.Bar(
             x=bin_centers,
             y=hist[0],
-            name="Frequency",
+            name="Num. examples",
             hovertemplate="Range: %{customdata[0]} - %{customdata[1]}<br>Count: %{y}<extra></extra>",
-            customdata=[(str(round(bin_edges[i], 3)), str(round(bin_edges[i + 1], 3))) for i in range(len(bin_edges) - 1)]
+            customdata=[(str(round(bin_edges[i], 3)), str(round(bin_edges[i + 1], 3))) for i in range(len(bin_edges) - 1)],
         )
     )
 
@@ -162,7 +166,7 @@ def create_combined_histogram(df, bars, line, option="boxplot", title=""):
 
         # Update layout for dual y-axes
         fig.update_layout(
-            xaxis_title=f"{bars} Value",
+            xaxis_title=xlabel,
             yaxis_title="Count",
             yaxis2=dict(
                 title=f"Average {line}",
@@ -201,7 +205,7 @@ def create_combined_histogram(df, bars, line, option="boxplot", title=""):
 
         # Update layout for the plot
         fig.update_layout(
-            xaxis_title=f"{bars} Value",
+            xaxis_title=xlabel,
             yaxis_title="Count",
             yaxis2=dict(
                 title=f"{line} Metrics",
@@ -214,6 +218,7 @@ def create_combined_histogram(df, bars, line, option="boxplot", title=""):
 
     elif option == "boxplot":
         # Add boxplots for errors
+        only_first = True
         for i, bin_label in enumerate(temp_df["bin"].cat.categories):
             # Extract errors for the current bin
             bin_errors = temp_df.loc[temp_df["bin"] == bin_label, line]
@@ -222,19 +227,23 @@ def create_combined_histogram(df, bars, line, option="boxplot", title=""):
             fig.add_trace(go.Box(
                 y=bin_errors,
                 x=[bin_centers[i]] * len(bin_errors),  # Align with bin center
-                name=f"Bin {i + 1}",
+                name="Error",
                 marker=dict(color=px.colors.qualitative.Plotly[1]),
                 boxmean=True,  # Show mean as a marker
-                showlegend=(i == 0),  # Show legend only for the first boxplot
+                showlegend=(len(bin_errors) > 0 and only_first),  # Show legend only for the first boxplot
+                legendgroup="Error",
                 width=(bin_edges[1] - bin_edges[0]) * 0.8,
                 yaxis="y2"
             ))
 
+            if len(bin_errors) > 0:
+                only_first = False
+
         # Update layout for the plot
         fig.update_layout(
             title=title,
-            xaxis_title=f"{bars} Value",
-            yaxis_title="Count",
+            xaxis=dict(title=xlabel, tickvals=bin_centers),
+            yaxis=dict(title="Count (log)", type="log"),
             yaxis2=dict(
                 title=f"{line} Distribution",
                 overlaying='y',

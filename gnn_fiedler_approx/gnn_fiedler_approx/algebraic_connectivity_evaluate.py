@@ -8,8 +8,6 @@ from torch_geometric.loader import DataLoader
 from gnn_fiedler_approx.custom_models.custom_gnns import GNNWrapper
 from gnn_fiedler_approx.algebraic_connectivity_script import EvalType, EvalTarget, load_dataset, generate_loss_function, baseline, evaluate
 
-pio.renderers.default = "browser"  # Use browser for Plotly visualizations.
-
 
 def combine_data_objects(data_objs):
     data_list = []
@@ -94,6 +92,8 @@ def main(config):
 
 
 if __name__ == "__main__":
+    pio.renderers.default = "browser"  # Use browser for Plotly visualizations.
+
     # Get available device.
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loaded torch. Using *{device}* device.")

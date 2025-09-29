@@ -1,5 +1,5 @@
 program: gnn_fiedler_approx/algebraic_connectivity_script.py
-name: norm_layers
+name: final_eval_dist_64
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
@@ -15,13 +15,13 @@ parameters:
   mlp_layers:
     value: 2
   dropout:
-    value: 0.09
+    value: 0.01
   activation:
     value: tanh
   pool:
-    value: s2s
+    value: max
   norm:
-    value: graph
+    value: null
   jk:
     value: cat
 ## Training configuration
@@ -30,7 +30,7 @@ parameters:
   loss:
     value: MAPE
   learning_rate:
-    value: 0.002434
+    value: 0.000405
   batch_size:
     value: "100%"
   iterations:
@@ -42,7 +42,7 @@ parameters:
     values:
       - [degree, degree_centrality, core_number, triangles, clustering, close_centrality]
   transform:
-    value: normalize_features
+    value: null
 
 command:
   - ${env}
