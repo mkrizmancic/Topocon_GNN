@@ -497,7 +497,6 @@ def evaluate(
     fig_err_curve.update_xaxes(showspikes=True, tickvals=[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
     fig_err_curve.update_yaxes(showspikes=True, nticks=10, title_text="Percentage of graphs")
 
-
     if not suppress_output:
         print(f"Evaluating model at epoch {epoch}.\n")
         print(

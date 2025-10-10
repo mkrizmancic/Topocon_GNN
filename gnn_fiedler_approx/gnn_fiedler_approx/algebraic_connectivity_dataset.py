@@ -16,7 +16,7 @@ from torch_geometric.data import Data, InMemoryDataset
 from matplotlib import pyplot as plt
 
 from my_graphs_dataset import GraphDataset
-from gnn_fiedler_approx.gnn_utils.transformations import EigenvectorFlipperTransform, RandomNodeFeaturesTransform
+from gnn_fiedler_approx.gnn_utils.transformations import EigenvectorFlipperTransform, RandomNodeFeaturesTransform, resolve_transform
 
 
 class FeatureFilterTransform(tg_transforms.BaseTransform):
@@ -83,6 +83,13 @@ class ConnectivityDataset(InMemoryDataset):
 
         # Build a list of transforms to be applied to the dataset.
         transforms = []
+
+        # Add a feature filter transform to the transform pipeline, if needed.
+        if not np.all(mask):
+            feature_filter = FeatureFilterTransform(mask)
+            transforms.append(feature_filter)
+
+        # Add any existing transform.
         if self.transform is not None:
             transforms.append(self.transform)
 
@@ -97,11 +104,6 @@ class ConnectivityDataset(InMemoryDataset):
         if random_feature is not None:
             transforms.append(random_feature)
             self.dynamic_features = True
-
-        # Add a feature filter transform to the transform pipeline, if needed.
-        if not np.all(mask):
-            feature_filter = FeatureFilterTransform(mask)
-            transforms.append(feature_filter)
 
         self.transform = tg_transforms.Compose(transforms)
 
@@ -527,7 +529,9 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
-        dataset = ConnectivityDataset(root, loader, selected_features=["degree", "degree_centrality", "triangles", "clustering", "local_density"], force_reload=False)
+        features = ['degree', 'degree_centrality', 'triangles', 'clustering', 'local_density']
+        transform = resolve_transform("normalize_features")
+        dataset = ConnectivityDataset(root, loader, selected_features=features, transform=transform, force_reload=False)
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, graphs=[3])
