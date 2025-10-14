@@ -152,69 +152,109 @@ def create_combined_histogram(df, bars, line, option="boxplot", title="", xlabel
         )
     )
 
-    if option == "mean":
-        # Add line plot (average metric)
-        fig.add_trace(go.Scatter(
-            x=bin_centers,
-            y=mean_per_bin,
-            mode='lines+markers',
-            name=f"Average {line}",
-            line=dict(color=px.colors.qualitative.Plotly[1]),
-            marker=dict(size=8),
-            yaxis="y2"
-        ))
+    if option in ["mean", "std", "ci"]:
+        def _add_mean_line(name_suffix="", line_width=2):
+            """Helper function to add the mean line trace"""
+            fig.add_trace(go.Scatter(
+                x=bin_centers,
+                y=mean_per_bin,
+                mode='lines+markers',
+                name=f"Mean {line}" + (f" {name_suffix}" if name_suffix else ""),
+                line=dict(color=px.colors.qualitative.Plotly[1], width=line_width),
+                marker=dict(size=8),
+                yaxis="y2"
+            ))
 
-        # Update layout for dual y-axes
-        fig.update_layout(
-            xaxis_title=xlabel,
-            yaxis_title="Count",
-            yaxis2=dict(
-                title=f"Average {line}",
-                overlaying='y',
-                side='right'
-            ),
-            bargap=0,
-        )
+        def _add_error_bars(upper_bound, lower_bound, error_name):
+            """Helper function to add asymmetric error bars"""
+            # Calculate asymmetric error arrays
+            error_upper = np.array(upper_bound) - np.array(mean_per_bin)
+            error_lower = np.array(mean_per_bin) - np.array(lower_bound)
 
-    elif option == "std":
-        upper_bound = mean_per_bin + std_per_bin
-        lower_bound = mean_per_bin - std_per_bin
+            # Add scatter plot with error bars
+            fig.add_trace(go.Scatter(
+                x=bin_centers,
+                y=mean_per_bin,
+                mode='lines+markers',
+                name=f"Mean {line}",
+                line=dict(color=px.colors.qualitative.Plotly[1], width=2),
+                marker=dict(size=8),
+                error_y=dict(
+                    type='data',
+                    symmetric=False,
+                    array=error_upper,
+                    arrayminus=error_lower,
+                    visible=True,
+                    color=px.colors.qualitative.Plotly[1],
+                    width=3
+                ),
+                yaxis="y2",
+                hovertemplate=(
+                    f'{xlabel}: %{{x}}<br>' +
+                    f'Mean {line}: %{{y:.3f}}<br>' +
+                    f'{error_name}<br>' +
+                    '<extra></extra>'
+                )
+            ))
 
-        fig.add_trace(go.Scatter(
-            x=np.concatenate([bin_centers, bin_centers[::-1]]),  # Fill between upper and lower bounds
-            y=np.nan_to_num(np.concatenate([upper_bound, lower_bound[::-1]])),
-            fill='toself',
-            fillcolor=px.colors.qualitative.Plotly[1],  # Red shade with transparency
-            opacity=0.2,
-            line=dict(color='rgba(255, 0, 0, 0)'),  # No line for the shaded area
-            hoverinfo="skip",  # Skip hover info for the shaded area
-            name="Std Deviation",
-            yaxis="y2"
-        ))
+        def _update_dual_axis_layout(y2_title):
+            """Helper function to update layout for dual y-axes"""
+            fig.update_layout(
+                title=title,
+                xaxis_title=xlabel,
+                yaxis_title="Count",
+                yaxis2=dict(
+                    title=y2_title,
+                    overlaying='y',
+                    side='right'
+                ),
+                bargap=0,
+            )
 
-        # Add line plot for mean
-        fig.add_trace(go.Scatter(
-            x=bin_centers,
-            y=mean_per_bin,
-            mode='lines+markers',
-            name="Mean",
-            line=dict(color=px.colors.qualitative.Plotly[1]),
-            marker=dict(size=8),
-            yaxis="y2"
-        ))
+        # Handle different options
+        if option == "mean":
+            _add_mean_line()
+            _update_dual_axis_layout(f"Average {line}")
 
-        # Update layout for the plot
-        fig.update_layout(
-            xaxis_title=xlabel,
-            yaxis_title="Count",
-            yaxis2=dict(
-                title=f"{line} Metrics",
-                overlaying='y',
-                side='right'
-            ),
-            bargap=0.0,  # Controls the gap between bars
-            barmode='overlay',  # Overlay the bars on top of each other
-        )
+        elif option == "std":
+            upper_bound = mean_per_bin + std_per_bin
+            lower_bound = mean_per_bin - std_per_bin
+
+            _add_error_bars(upper_bound, lower_bound, "Mean ± Std Deviation")
+            _update_dual_axis_layout(f"{line} Metrics")
+
+        elif option == "ci":
+            from scipy import stats
+
+            # Calculate 95% confidence intervals for each bin
+            confidence_level = 0.95
+            ci_lower = []
+            ci_upper = []
+
+            for bin_label in temp_df["bin"].cat.categories:
+                bin_data = temp_df.loc[temp_df["bin"] == bin_label, line]
+
+                if len(bin_data) > 1:
+                    # Calculate standard error
+                    mean_val = bin_data.mean()
+                    std_val = bin_data.std()
+                    count = len(bin_data)
+                    se = std_val / np.sqrt(count)
+
+                    # Get t-critical value for 95% CI
+                    t_critical = stats.t.ppf((1 + confidence_level) / 2, count - 1)
+                    margin_error = t_critical * se
+
+                    ci_lower.append(mean_val - margin_error)
+                    ci_upper.append(mean_val + margin_error)
+                else:
+                    # If only one data point or no data, use the mean value
+                    mean_val = bin_data.mean() if len(bin_data) > 0 else np.nan
+                    ci_lower.append(mean_val)
+                    ci_upper.append(mean_val)
+
+            _add_error_bars(ci_upper, ci_lower, "Mean with 95% Confidence Interval")
+            _update_dual_axis_layout(f"{line} with 95% CI")
 
     elif option == "boxplot":
         # Add boxplots for errors

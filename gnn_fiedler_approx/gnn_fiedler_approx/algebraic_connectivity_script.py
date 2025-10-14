@@ -177,22 +177,34 @@ def load_dataset(
         bs = float(batch_size.strip("%")) / 100.0
         batch_size = int(np.ceil(bs * max_dataset_len))
     loader_kwargs = {"num_workers": NUM_WORKERS, "persistent_workers": True if NUM_WORKERS > 0 else False}
-    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, **loader_kwargs)  # type: ignore
-    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, **loader_kwargs)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size, shuffle=False)  # type: ignore
 
-    # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
-    train_batch = next(iter(train_loader))
-    val_batch = next(iter(val_loader))
-    test_batch = next(iter(test_loader)) if test_size else None
+    train_data_obj = None
+    if train_size > 0:
+        train_loader = DataLoader(train_dataset, batch_size, shuffle=True, **loader_kwargs)  # type: ignore
+        train_batch = next(iter(train_loader))  # Get a single large batch.
+        train_data_obj = train_batch if (train_size <= batch_size and not dynamic_features) else train_loader
 
-    train_data_obj = train_batch if (train_size <= batch_size and not dynamic_features) else train_loader
-    if USE_HYBRID_LOADING:
-        val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
-        test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in test_loader]
-    else:
-        val_data_obj = val_batch if val_size <= batch_size else val_loader
-        test_data_obj = test_batch if test_size <= batch_size else test_loader
+    val_data_obj = None
+    if val_size > 0:
+        val_loader = DataLoader(val_dataset, batch_size, shuffle=False, **loader_kwargs)  # type: ignore
+        val_batch = next(iter(val_loader))
+        if val_size <= batch_size:
+            val_data_obj = val_batch
+        elif USE_HYBRID_LOADING:
+            val_data_obj = [val_batch for val_batch in val_loader]
+        else:
+            val_data_obj = val_loader
+
+    test_data_obj = None
+    if test_size > 0:
+        test_loader = DataLoader(test_dataset, batch_size, shuffle=False)  # type: ignore
+        test_batch = next(iter(test_loader)) if test_size else None
+        if test_size <= batch_size:
+            test_data_obj = test_batch
+        elif USE_HYBRID_LOADING:
+            test_data_obj = [test_batch for test_batch in test_loader]
+        else:
+            test_data_obj = test_loader
 
     dataset_props["num_batches"] = math.ceil(max_dataset_len / batch_size)
     if not suppress_output:
@@ -450,7 +462,7 @@ def evaluate(
     df = pd.DataFrame()
 
     # Loss on the train set.
-    train_loss = do_test(model, train_data, criterion)
+    train_loss = do_test(model, train_data, criterion) if train_data else float("nan")
     test_loss = do_test(model, test_data, criterion, epoch=0)
 
     # Build a detailed results DataFrame.
@@ -784,11 +796,11 @@ if __name__ == "__main__":
         global_config = {
             ## Model configuration
             "architecture": "GraphSAGE",
-            "hidden_channels": 64,
+            "hidden_channels": 32,
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "s2s",
+            "pool": "minmax",
             "norm": "graph",
             "jk": "cat",
             "dropout": 0.09,
@@ -797,7 +809,7 @@ if __name__ == "__main__":
             "loss": "MAPE",
             "learning_rate": 0.002434,
             "batch_size": "100%",
-            "epochs": 10,
+            "epochs": 1000,
             "seed": 42,
             ## Dataset configuration
             "label_normalization": None,
