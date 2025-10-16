@@ -130,6 +130,7 @@ def load_dataset(
     dataset_props = {}
     dataset_props["feature_dim"] = dataset.num_features  # type: ignore
 
+    dataset_config["target"] = dataset.target_function(None)
     dataset_config["num_graphs"] = len(dataset)
     features = selected_features if selected_features else dataset.features
     dynamic_features = dataset.dynamic_features
@@ -233,7 +234,7 @@ def load_dataset(
 # ***************************************
 def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwargs):
     """Generate a Neural Network model based on the architecture and hyperparameters."""
-    # GLOBALS: device, premade_gnns, custom_gnns
+    # GLOBALS: premade_gnns, custom_gnns
     if architecture in premade_gnns:
         model = GNNWrapper(
             architecture=architecture,
@@ -245,8 +246,6 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
     else:
         MyGNN = custom_gnns[architecture]
         model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * gnn_layers)
-
-    model = model.to(device)
     return model
 
 
@@ -551,7 +550,6 @@ def evaluate(
 def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_wandb=False, is_best_run=False):
     # GLOBALS: device
 
-
     # Helper boolean flags.
     is_sweep = config is None
     save_best = eval_target == EvalTarget.BEST
@@ -661,6 +659,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         jk=config.get("jk"),
         **model_kwargs,
     )
+    model.to(device)
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion = generate_loss_function(config["loss"])
 
@@ -800,7 +799,7 @@ if __name__ == "__main__":
             "gnn_layers": 5,
             "mlp_layers": 2,
             "activation": "tanh",
-            "pool": "minmax",
+            "pool": "s2s",
             "norm": "graph",
             "jk": "cat",
             "dropout": 0.09,
