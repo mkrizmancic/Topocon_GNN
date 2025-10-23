@@ -1,9 +1,12 @@
 # Original version: https://gist.github.com/mogproject/50668d3ca60188c50e6ef3f5f3ace101
 
+import multiprocessing as mp
 from collections import defaultdict
+from typing import Any, Callable, Dict, List, Tuple, Union
+
 import networkx as nx
 import plotly.graph_objects as go
-from typing import Any, List, Dict, Tuple, Union, Callable
+import wandb
 
 Vertex = Any
 Edge = Tuple[Vertex, Vertex]
@@ -220,3 +223,77 @@ class GraphVisualization:
         fig.add_traces(self._get_edge_traces())
         fig.add_trace(self._get_node_trace(showlabel, colorscale, showscale, colorbar_title, reversescale))
         return fig
+
+
+def create_graph_vis(G, features=None):
+    """Create a Plotly figure of a NetworkX graph."""
+    pos = nx.spring_layout(G)
+    vis = GraphVisualization(
+        G, pos, node_text_position='top left', node_size=20,
+    )
+    fig = vis.create_figure()
+
+    if features:
+        bar_traces = add_feature_visualization(pos, features["data"], features["names"])
+        fig.add_traces(bar_traces)
+
+    return fig
+    # # Edges
+    # edge_x = []
+    # edge_y = []
+    # for edge in G.edges():
+    #     x0, y0 = pos[edge[0]]
+    #     x1, y1 = pos[edge[1]]
+    #     edge_x.extend([x0, x1, None])
+    #     edge_y.extend([y0, y1, None])
+
+    # edge_trace = go.Scatter(
+    #     x=edge_x, y=edge_y,
+    #     line=dict(width=0.5, color='#888'),
+    #     hoverinfo='none',
+    #     mode='lines'
+    # )
+    # # Nodes
+    # node_x = []
+    # node_y = []
+    # for node in G.nodes():
+    #     x, y = pos[node]
+    #     node_x.append(x)
+    #     node_y.append(y)
+
+    # node_trace = go.Scatter(
+    #     x=node_x, y=node_y,
+    #     mode='markers',
+    #     hoverinfo='text',
+    #     line_width=2
+    # )
+    # # Put it all together.
+    # fig = go.Figure(data=[edge_trace, node_trace], layout=go.Layout())
+    # return fig
+
+
+def create_graph_wandb(G):
+    """Convert a Plotly figure of the NetworkX graph to a W&B  html representation."""
+    # return wandb.Html(plotly.io.to_html(create_graph_vis(G)))
+    # return wandb.Image(create_graph_vis(G))
+    fig = create_graph_vis(G)
+    return wandb.Html(fig.to_html(auto_play=False, full_html=False, include_plotlyjs='cdn'))
+
+
+def create_graph_vis_parallel(graphs):
+    """Create a Plotly figure of a NetworkX graph with parallel processing."""
+    with mp.Pool() as pool:
+        graph_visuals = pool.imap(create_graph_vis, graphs, chunksize=100)
+
+    return list(graph_visuals)
+
+
+def add_feature_visualization(pos, data, features):
+    """Add a bar chart visualization of node features to a Plotly figure."""
+    # Create bar charts for each node
+    bar_charts = []
+    for i, p in pos.items():
+        bar_charts.append(
+            go.Bar(x=features, y=data[i], orientation='h')
+        )
+    return bar_charts

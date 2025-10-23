@@ -21,16 +21,16 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.seed import seed_everything
 
 from my_graphs_dataset import GraphDataset, GraphType
-from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset, inspect_graphs
+from gnn_fiedler_approx import ConnectivityDataset, inspect_dataset
 from gnn_fiedler_approx.custom_models import GNNWrapper, premade_gnns, custom_gnns
 from gnn_fiedler_approx.gnn_utils.utils import (
-    create_combined_histogram,
-    create_graph_wandb,
     extract_graphs_from_batch,
     graphs_to_tuple,
     print_dataset_splits,
     visualize_embeddings
 )
+from gnn_fiedler_approx.gnn_utils.plotting import create_combined_histogram
+from gnn_fiedler_approx.gnn_utils.graph_drawer import create_graph_wandb
 from gnn_fiedler_approx.gnn_utils.transformations import DatasetTransformer, resolve_transform
 
 
@@ -332,7 +332,8 @@ def do_test(model, data, criterion, epoch=-1):
 
 
 def train(
-    model, optimizer, criterion, train_data_obj, val_data_obj, num_epochs=100, log_freq=10, suppress_output=False, save_best=False
+    model, optimizer, criterion, train_data_obj, val_data_obj,
+    num_epochs=100, log_freq=10, suppress_output=False, save_best=False
 ):
     # GLOBALS: device
 
@@ -455,7 +456,8 @@ def baseline(train_data, val_data, test_data, criterion):
 
 
 def evaluate(
-    model, epoch, criterion, train_data, test_data, dst, title="", plot_graphs_wandb=False, plot_embeddings=False, make_table_wandb=False, suppress_output=False
+    model, epoch, criterion, train_data, test_data, dst,
+    title="", plot_graphs_wandb=False, plot_embeddings=False, make_table_wandb=False, suppress_output=False
 ):
     model.eval()
     df = pd.DataFrame()
